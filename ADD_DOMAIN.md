@@ -4,9 +4,9 @@ This guide walks through every file you need to create or update to support a
 new real-world domain — such as aviation, supply chain, power grids, or
 manufacturing — without changing core platform logic.
 
-> **Core design rule:** `src/core`, `src/reasoning`, `src/graph`, and
-> `src/solver` (aside from the generic `StubSolver`) contain **zero
-> domain-specific names**. A new domain is a package under `domain/<name>/`
+> **Core design rule:** `app/api/src/core`, `app/api/src/reasoning`, `app/api/src/graph`, and
+> `app/api/src/solver` (aside from the generic `StubSolver`) contain **zero
+> domain-specific names**. A new domain is a package under `app/api/domain/<name>/`
 > plus one catalog entry. Loading is controlled by `ENABLED_DOMAINS`.
 
 Using Cursor? Paste the staged prompts in
@@ -18,7 +18,7 @@ Using Cursor? Paste the staged prompts in
 ## Layout at a glance
 
 ```
-domain/
+app/api/domain/
   aviation/
     adapters/
       opensky_flights.py      # one file per data source
@@ -26,7 +26,7 @@ domain/
   earthquakes/
     adapters/
       usgs_earthquakes.py
-src/
+app/api/src/
   ingestion/
     registry.py               # DOMAIN_CATALOG + ENABLED_DOMAINS filtering
     runner.py                 # shared upsert loop (do not put domain logic here)
@@ -48,9 +48,9 @@ separate finance feed). Cron / `--adapter` chooses which adapter runs;
 | Live ground-truth data | PostGIS (`entity` + `entity_state`) | No — tables are generic |
 | Dependency graph | Neo4j | No — nodes and edges are generic |
 | Vector / RAG knowledge | pgvector | No — scoped by scenario ID |
-| Reasoning pipeline | `src/reasoning/` | No |
-| **Domain package** | `domain/<name>/` | **Yes — new package** |
-| **Catalog entry** | `src/ingestion/registry.py` | **Yes — add a `DomainSpec`** |
+| Reasoning pipeline | `app/api/src/reasoning/` | No |
+| **Domain package** | `app/api/domain/<name>/` | **Yes — new package** |
+| **Catalog entry** | `app/api/src/ingestion/registry.py` | **Yes — add a `DomainSpec`** |
 | **Enable at runtime** | `ENABLED_DOMAINS` env / Helm `enabledDomains` | **Yes** |
 | **Dependency graph wiring** | Scripts or tests | **Yes — domain bootstrap as needed** |
 | **Ingestion CronJob** | Helm / OpenShift | **Yes — `adapterId` + `enabledDomains`** |
@@ -61,14 +61,14 @@ separate finance feed). Cron / `--adapter` chooses which adapter runs;
 
 We'll use **aviation** (ADS-B flight data from the OpenSky Network) as the
 running example. The live adapter already lives at
-`domain/aviation/adapters/opensky_flights.py`.
+`app/api/domain/aviation/adapters/opensky_flights.py`.
 
 ---
 
 ### Step 1 — Create the domain package and adapter
 
 ```
-domain/<your_domain>/
+app/api/domain/<your_domain>/
   __init__.py
   adapters/
     __init__.py
@@ -78,11 +78,11 @@ domain/<your_domain>/
 Example path for OpenSky:
 
 ```
-domain/aviation/adapters/opensky_flights.py
+app/api/domain/aviation/adapters/opensky_flights.py
 ```
 
 Every adapter must satisfy the `IngestionAdapter` protocol in
-`src/core/ingestion.py`:
+`app/api/src/core/ingestion.py`:
 
 ```python
 class IngestionAdapter(Protocol):
@@ -109,7 +109,7 @@ everything domain-specific in `attributes`.
 #### Example adapter (sketch)
 
 ```python
-# domain/aviation/adapters/opensky_flights.py
+# app/api/domain/aviation/adapters/opensky_flights.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -170,20 +170,20 @@ class OpenSkyFlightsAdapter:
         )
 ```
 
-See the real implementation under `domain/aviation/adapters/opensky_flights.py`
+See the real implementation under `app/api/domain/aviation/adapters/opensky_flights.py`
 for the full field mapping.
 
 ---
 
 ### Step 2 — Register the domain in the catalog
 
-There is a **single** registry: `src/ingestion/registry.py`. CLI
+There is a **single** registry: `app/api/src/ingestion/registry.py`. CLI
 (`ingest-run`), the LLM ingestion tool, and solver selection all read from it.
 
 Add a `DomainSpec` (or extend an existing domain with another adapter):
 
 ```python
-# src/ingestion/registry.py
+# app/api/src/ingestion/registry.py
 
 DOMAIN_CATALOG: dict[str, DomainSpec] = {
     # ...
@@ -202,8 +202,8 @@ DOMAIN_CATALOG: dict[str, DomainSpec] = {
 }
 ```
 
-You do **not** edit `src/ingestion/__main__.py` or hardcode adapters in
-`src/ingestion/tool.py` — those consume the registry.
+You do **not** edit `app/api/src/ingestion/__main__.py` or hardcode adapters in
+`app/api/src/ingestion/tool.py` — those consume the registry.
 
 #### Enable the domain at runtime
 
@@ -282,7 +282,7 @@ OpenSky fixture file — follow the USGS pattern when adding one.
 
 The dependency graph (Neo4j) captures which entities depend on which.
 Wire it once at setup time (script or Job), not inside the adapter. Use
-helpers in `src/graph/nodes.py`:
+helpers in `app/api/src/graph/nodes.py`:
 
 ```python
 import asyncio
@@ -320,11 +320,11 @@ infrastructure nodes as needed. Stage 1 traversal picks them up automatically.
 when you need domain-specific maths (delay propagation, OR-Tools, etc.).
 
 ```
-domain/aviation/solver.py
+app/api/domain/aviation/solver.py
 ```
 
 ```python
-# domain/aviation/solver.py
+# app/api/domain/aviation/solver.py
 from src.core.solver import AffectedSubgraph, LiveState, ResponseOption, SolverResult
 
 
@@ -374,7 +374,7 @@ DomainSpec(
 )
 ```
 
-`src/api/app.py` calls `resolve_solver(settings)` at startup:
+`app/api/src/api/app.py` calls `resolve_solver(settings)` at startup:
 
 - exactly one enabled domain declares a solver → that solver is used
 - none (or more than one) → `StubSolver`
@@ -407,15 +407,15 @@ also carry `enabledDomains`.
 ```
 New domain = these files only:
 
-  CREATE  domain/<name>/__init__.py
-  CREATE  domain/<name>/adapters/__init__.py
-  CREATE  domain/<name>/adapters/<adapter_id>.py
+  CREATE  app/api/domain/<name>/__init__.py
+  CREATE  app/api/domain/<name>/adapters/__init__.py
+  CREATE  app/api/domain/<name>/adapters/<adapter_id>.py
   CREATE  tests/fixtures/<adapter_id>.json            ← recorded API fixture
   CREATE  tests/test_<adapter_id>.py                  ← or extend test_ingestion.py
-  UPDATE  src/ingestion/registry.py                   ← DomainSpec (+ adapters)
+  UPDATE  app/api/src/ingestion/registry.py                   ← DomainSpec (+ adapters)
   UPDATE  tests/test_registry.py                      ← assert catalog entry
   SET     ENABLED_DOMAINS=<name>                      ← .env / Helm / ConfigMap
-  CREATE  domain/<name>/solver.py                     ← (optional) real solver
+  CREATE  app/api/domain/<name>/solver.py                     ← (optional) real solver
   UPDATE  deploy/helm/ingestion/values.yaml           ← adapterId + enabledDomains
 ```
 
@@ -425,14 +425,14 @@ Cursor paste-prompts for the same checklist:
 **Files you normally never touch for domain logic:**
 
 ```
-  src/core/           ← domain-agnostic interfaces and settings
-  src/reasoning/      ← ReAct pipeline
-  src/graph/          ← Neo4j helpers
-  src/llm/            ← inference + pgvector RAG
-  src/api/query.py    ← POST /query route
-  src/ingestion/runner.py
-  src/ingestion/tool.py   ← schema built from registry
-  src/ingestion/__main__.py
+  app/api/src/core/           ← domain-agnostic interfaces and settings
+  app/api/src/reasoning/      ← ReAct pipeline
+  app/api/src/graph/          ← Neo4j helpers
+  app/api/src/llm/            ← inference + pgvector RAG
+  app/api/src/api/query.py    ← POST /query route
+  app/api/src/ingestion/runner.py
+  app/api/src/ingestion/tool.py   ← schema built from registry
+  app/api/src/ingestion/__main__.py
 ```
 
 ---
@@ -446,7 +446,7 @@ Cursor paste-prompts for the same checklist:
 | Editing `__main__.py` / `tool.py` to hardcode adapters | Register in `DOMAIN_CATALOG` only |
 | Forgetting `ENABLED_DOMAINS` | Adapter won't load; CLI/tool will reject it |
 | Two adapters writing the same entity `id` | Upsert **replaces** `attributes` — merge keys or re-emit full attributes |
-| Calling the inference API from an adapter | Don't — LLM/vector calls go through `src/llm/` |
+| Calling the inference API from an adapter | Don't — LLM/vector calls go through `app/api/src/llm/` |
 | Mutating the live store during a simulation query | Don't — overlays are additive; live rows are ingestion-only |
-| Hardcoding a domain entity name in a core module | Keep it in `domain/` or `attributes` |
+| Hardcoding a domain entity name in a core module | Keep it in `app/api/domain/` or `attributes` |
 | Forgetting `--enable-auto-tool-choice` on vLLM | Tool calls from the reasoning pipeline will fail silently |

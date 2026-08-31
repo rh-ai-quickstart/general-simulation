@@ -1,27 +1,25 @@
 # deploy/ layout
 
 OpenShift deployment is **Helm-only** (`deploy/helm/`), driven by the root
-[Makefile](../Makefile). Container images are built from `deploy/app/` and
-`deploy/postgres/`.
+[Makefile](../Makefile). The API image is built from [`app/api/Containerfile`](../app/api/Containerfile);
+Postgres from `deploy/postgres/`.
 
 ## Quick reference
 
 | Path | Used by |
 |------|---------|
-| `app/Containerfile` | `make build-app`, `.github/workflows/publish-images.yml` |
+| `../app/api/Containerfile` | `make build-app`, `.github/workflows/publish-images.yml` |
 | `postgres/` | `make build-postgres`, `compose.yaml` (init SQL mount) |
 | `helm/` | `make deploy*`, `make lint-charts`, `make package-chart`, `.github/workflows/publish-helm-chart.yml` |
 
 ## Container images
 
 ```
-deploy/
-├── app/
-│   └── Containerfile          # FastAPI app image (make build-app)
-└── postgres/
-    ├── Containerfile          # Custom Postgres image (AGE + pgvector + PostGIS)
-    └── init/
-        └── 01_extensions.sql  # Mounted by compose.yaml; mirrored in helm/postgres ConfigMap
+app/api/Containerfile          # FastAPI app image (make build-app)
+deploy/postgres/
+├── Containerfile              # Custom Postgres image (AGE + pgvector + PostGIS)
+└── init/
+    └── 01_extensions.sql      # Mounted by compose.yaml; mirrored in helm/postgres ConfigMap
 ```
 
 Default image registry: `quay.io/rh-ai-quickstart`
@@ -52,6 +50,22 @@ deploy/helm/
 | `deploy-umbrella` | `helm/general-simulation` |
 | `lint-charts` | all local charts + umbrella |
 | `package-chart` | `helm/general-simulation` |
+| `test-charts` | `helm unittest` on postgres, bootstrap, vllm, api, ingestion |
+
+## Helm chart tests
+
+Unit tests live under each chart's `tests/` directory and run via [helm-unittest](https://github.com/helm-unittest/helm-unittest):
+
+```bash
+# Install once
+helm plugin install https://github.com/helm-unittest/helm-unittest
+
+# Run all chart tests
+make test-charts
+
+# Or run Python + Helm together
+make test
+```
 
 ## Chart repository (subchart consumers)
 

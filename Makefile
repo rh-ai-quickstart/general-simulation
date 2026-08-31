@@ -64,8 +64,8 @@ HELM_COMMON := --namespace $(NAMESPACE) --create-namespace
         deploy deploy-postgres deploy-neo4j deploy-bootstrap deploy-vllm \
         deploy-api deploy-ingestion deploy-umbrella neo4j-connect \
         package-chart \
-        undeploy status lint-charts \
-        _guard-pg-password _guard-neo4j-password _guard-oc _guard-helm _guard-podman
+        undeploy status lint-charts test test-python test-charts \
+        _guard-pg-password _guard-neo4j-password _guard-oc _guard-helm _guard-helm-unittest _guard-podman
 
 # ── Default target ────────────────────────────────────────────────────────────
 all: help
@@ -89,6 +89,9 @@ help:
 	@printf "  %-36s %s\n" "undeploy"                            "Uninstall all Helm releases"
 	@printf "  %-36s %s\n" "status"                              "Show releases and pod status"
 	@printf "  %-36s %s\n" "lint-charts"                         "Lint all Helm charts"
+	@printf "  %-36s %s\n" "test"                              "Run Python and Helm chart tests"
+	@printf "  %-36s %s\n" "test-python"                       "Run pytest (app/api/tests)"
+	@printf "  %-36s %s\n" "test-charts"                       "Run helm unittest on deploy/helm charts"
 	@printf "\nVariables:\n"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
 	@printf "  %-18s %s\n" "NAMESPACE"        "$(NAMESPACE)"
@@ -115,6 +118,12 @@ _guard-helm:
 	@command -v helm >/dev/null 2>&1 || \
 	  { echo "ERROR: 'helm' CLI not found. Install Helm 3+ from https://helm.sh/docs/intro/install/"; exit 1; }
 
+_guard-helm-unittest: _guard-helm
+	@helm plugin list 2>/dev/null | grep -q unittest || \
+	  { echo "ERROR: helm-unittest plugin not found."; \
+	    echo "Install: helm plugin install https://github.com/helm-unittest/helm-unittest"; \
+	    exit 1; }
+
 _guard-podman:
 	@command -v podman >/dev/null 2>&1 || \
 	  { echo "ERROR: 'podman' not found. Install Podman or substitute 'docker' by setting PODMAN=docker."; exit 1; }
@@ -136,7 +145,7 @@ build-app: _guard-podman
 	@echo "==> Building FastAPI app image: $(IMG_APP)"
 	podman build \
 	  --platform=linux/amd64 \
-	  -f deploy/app/Containerfile \
+	  -f app/api/Containerfile \
 	  -t $(IMG_APP) \
 	  .
 	podman push $(IMG_APP)
@@ -334,3 +343,22 @@ lint-charts: _guard-helm
 	helm dependency update $(CHART_UMBRELLA)
 	helm lint $(CHART_UMBRELLA)
 	@echo "==> All charts passed lint."
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+test: test-python test-charts
+
+test-python:
+	@echo "==> Running Python tests..."
+	uv run pytest
+
+test-charts: _guard-helm-unittest
+	@for chart in \
+	  $(CHART_POSTGRES) \
+	  $(CHART_BOOTSTRAP) \
+	  $(CHART_VLLM) \
+	  $(CHART_API) \
+	  $(CHART_INGESTION); do \
+	  printf "==> Testing $$chart ...\n"; \
+	  helm unittest "$$chart" || exit 1; \
+	done
+	@echo "==> All Helm chart tests passed."

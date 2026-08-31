@@ -1,0 +1,31 @@
+suite: bootstrap job
+templates:
+  - templates/job.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: runs bootstrap-schema as a helm post-install hook
+    set:
+      postgres.password: demo-pg
+      neo4j.password: demo-neo4j
+      image: quay.io/rh-ai-quickstart/general-simulation-api:dev
+      waitFor.enabled: true
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: general-sim-bootstrap
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+      - equal:
+          path: spec.template.spec.containers[0].command[0]
+          value: bootstrap-schema
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[0].value
+          pattern: "^postgresql://"
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: wait-for-deps

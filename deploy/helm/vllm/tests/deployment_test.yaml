@@ -1,0 +1,26 @@
+suite: vllm deployment
+templates:
+  - templates/deployment.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: enables tool calling and targets GPU nodes
+    set:
+      image: docker.io/vllm/vllm-openai:v0.6.3
+      model.toolCallParser: llama3_json
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: vllm
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-auto-tool-choice
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: llama3_json
+      - equal:
+          path: spec.template.spec.nodeSelector["nvidia.com/gpu.present"]
+          value: "true"

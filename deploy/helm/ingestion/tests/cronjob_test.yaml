@@ -1,0 +1,35 @@
+suite: ingestion cronjob
+templates:
+  - templates/cronjob.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: schedules ingestion with forbid concurrency and src.ingestion module
+    set:
+      postgres.password: demo-pg
+      neo4j.password: demo-neo4j
+      llm.apiKey: unused
+      adapterId: opensky_flights
+      enabledDomains: aviation
+      image: quay.io/rh-ai-quickstart/general-simulation-api:dev
+    asserts:
+      - isKind:
+          of: CronJob
+      - equal:
+          path: metadata.name
+          value: general-sim-ingestion
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command[2]
+          value: src.ingestion
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].command
+          content: opensky_flights
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: ENABLED_DOMAINS
+            value: aviation

@@ -100,7 +100,7 @@ Postgres carries the remaining two persistence concerns. The dependency graph ha
 
 ### Ingestion — getting live data in
 
-Ingestion adapters live under `domain/<name>/adapters/`. Each pulls from one
+Ingestion adapters live under `app/api/domain/<name>/adapters/`. Each pulls from one
 external source and normalises into a single **canonical schema** (id, type,
 optional geometry, timestamp, status, and a free-form attributes field). The
 shared runner in `src/ingestion/` upserts into PostGIS only — ground truth,
@@ -199,7 +199,7 @@ This is what makes multiple concurrent what-if scenarios trivial — each is an 
 The platform is best understood as a domain-agnostic skeleton with well-defined
 swap points. The skeleton — OpenShift, vLLM (optional), Postgres, Neo4j, the
 ReAct pipeline, and the overlay mechanism — stays identical. Domain-specific
-code lives under top-level **`domain/<name>/`** packages (adapters, optional
+code lives under **`app/api/domain/<name>/`** packages (adapters, optional
 solvers). Which packages load is controlled by **`ENABLED_DOMAINS`**
 (see [ADD_DOMAIN.md](ADD_DOMAIN.md); Cursor:
 [docs/prompts/add-domain/README.md](docs/prompts/add-domain/README.md)).
@@ -224,8 +224,8 @@ Shipped today:
 
 | Domain id | Package | Adapters |
 |---|---|---|
-| `aviation` (default) | `domain/aviation/` | `opensky_flights` |
-| `earthquakes` | `domain/earthquakes/` | `usgs_earthquakes` |
+| `aviation` (default) | `app/api/domain/aviation/` | `opensky_flights` |
+| `earthquakes` | `app/api/domain/earthquakes/` | `usgs_earthquakes` |
 
 ```bash
 ENABLED_DOMAINS=aviation          # default
@@ -244,48 +244,53 @@ uv run ingest-run --adapter opensky_flights
 5. **Live data and simulation knowledge stay separate.** The overlay must never mutate ground truth; this is what enables concurrent, reversible what-if scenarios.
 6. **The `tool_call_trace` is the reasoning audit trail.** Every `QueryResponse` includes the ordered list of tool calls the agent made — use this to debug or explain any answer.
 
-> In short: a fixed OpenShift-native skeleton handles platform, inference, storage, and agentic reasoning identically across domains, while domain packages under `domain/` — adapters, optional solvers, and related wiring — are all that change to retarget it from supply chains to manufacturing plants. See [ADD_DOMAIN.md](ADD_DOMAIN.md).
+> In short: a fixed OpenShift-native skeleton handles platform, inference, storage, and agentic reasoning identically across domains, while domain packages under `app/api/domain/` — adapters, optional solvers, and related wiring — are all that change to retarget it from supply chains to manufacturing plants. See [ADD_DOMAIN.md](ADD_DOMAIN.md).
 
 ---
 
 ## Repository layout
 
 ```
-domain/                      # Domain packages (adapters, optional solvers)
-  aviation/
-    adapters/                # e.g. opensky_flights
-  earthquakes/
-    adapters/                # e.g. usgs_earthquakes
-src/
-  core/                      # Domain-agnostic abstractions, interfaces, and Settings
-  ingestion/
-    registry.py              # ENABLED_DOMAINS catalog + adapter/solver resolution
-    runner.py                # Canonical ingest loop
-    tool.py                  # run_ingestion_pull tool schema + callable
-  graph/
-    bootstrap.py             # Idempotent DDL for Postgres + Neo4j
-    nodes.py                 # Entity CRUD + dependency edge helpers
-    events.py                # SimulationEvent overlay inject / remove
-    cypher.py                # neo4j_session() context manager
-    tool.py                  # get_affected_subgraph tool schema + callable
-  reasoning/
-    pipeline.py              # ReAct agent loop — top-level orchestrator
-    stage1.py                # Neo4j graph traversal (called by pipeline dispatcher)
-    stage2.py                # PostGIS live state read + solver (called by pipeline dispatcher)
-    stage3.py                # Standalone synthesis helper (vector search + single generate())
-    search_tool.py           # search_scenario_context tool schema + callable
-    types.py                 # QueryRequest / QueryResponse / ToolCallRecord
-  solver/
-    stub.py                  # StubSolver (fallback; domain solvers live under domain/)
-    tool.py                  # solve_impact tool schema + legacy callable
-  llm/
-    base.py                  # LLMClientBase protocol
-    openai_client.py         # OpenAI-compatible inference + pgvector RAG
-    fake.py                  # FakeLLMClient for tests (supports response_sequence)
-    types.py                 # Message / ToolCall / GenerateResult / Chunk
-  api/                       # FastAPI entrypoint + admin SPA
-deploy/                      # Containerfiles and Helm charts
-tests/
+app/
+  api/                       # Python platform (FastAPI, ingestion, graph, reasoning)
+    domain/                  # Domain packages (adapters, optional solvers)
+      aviation/
+        adapters/            # e.g. opensky_flights
+      earthquakes/
+        adapters/            # e.g. usgs_earthquakes
+    src/
+      core/                  # Domain-agnostic abstractions, interfaces, and Settings
+      ingestion/
+        registry.py          # ENABLED_DOMAINS catalog + adapter/solver resolution
+        runner.py            # Canonical ingest loop
+        tool.py              # run_ingestion_pull tool schema + callable
+      graph/
+        bootstrap.py         # Idempotent DDL for Postgres + Neo4j
+        nodes.py             # Entity CRUD + dependency edge helpers
+        events.py            # SimulationEvent overlay inject / remove
+        cypher.py            # neo4j_session() context manager
+        tool.py              # get_affected_subgraph tool schema + callable
+      reasoning/
+        pipeline.py          # ReAct agent loop — top-level orchestrator
+        stage1.py            # Neo4j graph traversal (called by pipeline dispatcher)
+        stage2.py            # PostGIS live state read + solver (called by pipeline dispatcher)
+        stage3.py            # Standalone synthesis helper (vector search + single generate())
+        search_tool.py       # search_scenario_context tool schema + callable
+        types.py             # QueryRequest / QueryResponse / ToolCallRecord
+      solver/
+        stub.py              # StubSolver (fallback; domain solvers live under domain/)
+        tool.py              # solve_impact tool schema + legacy callable
+      llm/
+        base.py              # LLMClientBase protocol
+        openai_client.py     # OpenAI-compatible inference + pgvector RAG
+        fake.py              # FakeLLMClient for tests (supports response_sequence)
+        types.py             # Message / ToolCall / GenerateResult / Chunk
+      api/                   # FastAPI entrypoint + admin SPA
+    tests/
+    scripts/                 # seed_demo.py, seed_opensky_live.py
+    Containerfile            # API image build (make build-app)
+  frontend_ui/               # Simulation console (React/Vite)
+deploy/                      # Helm charts and postgres image
 ```
 
 ---
@@ -335,13 +340,24 @@ uv run python -m src.api.main
 uv run uvicorn src.api.app:app --reload
 ```
 
+### 4b. Run the simulation console (optional)
+
+```bash
+cd app/frontend_ui && npm install && npm run dev
+```
+
+Open **http://localhost:5173** (Vite proxies API calls to port 8000).
+
 Visit `http://localhost:8000/health` — returns `{"status": "ok", "db": "reachable"}` when Postgres is reachable.
 Visit `http://localhost:8000/admin/` for the admin SPA (requires both Postgres and Neo4j).
 
 ### 5. Run tests (no GPU or live Llama Stack required)
 
 ```bash
-uv run pytest
+make test              # Python (pytest) + Helm chart tests
+# or individually:
+uv run pytest          # app/api/tests only
+make test-charts       # deploy/helm/* (requires helm-unittest plugin)
 ```
 
 
@@ -354,7 +370,7 @@ Two helpers are included for smoke-testing a running cluster:
 ./demo.sh [scenario_id] [question]
 
 # Seed the graph and Postgres with synthetic demo data
-uv run python scripts/seed_demo.py
+uv run python app/api/scripts/seed_demo.py
 ```
 
 `demo.sh` defaults to the supply-chain scenario (Port of Los Angeles closure).

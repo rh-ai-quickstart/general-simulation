@@ -1,0 +1,27 @@
+suite: api configmap
+templates:
+  - templates/configmap.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: exposes LLM and domain settings
+    set:
+      enabledDomains: aviation
+      llm.backend: openai
+      models.generation: gpt-4o-mini
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: app-config
+      - equal:
+          path: data.ENABLED_DOMAINS
+          value: aviation
+      - equal:
+          path: data.LLM_BACKEND
+          value: openai
+      - equal:
+          path: data.GENERATION_MODEL_ID
+          value: gpt-4o-mini

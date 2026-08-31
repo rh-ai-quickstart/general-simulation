@@ -1,0 +1,49 @@
+suite: api deployment
+templates:
+  - templates/deployment.yaml
+  - templates/secret.yaml
+  - templates/configmap.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: renders API deployment with health probes and init wait container
+    template: templates/deployment.yaml
+    set:
+      postgres.password: demo-pg
+      neo4j.password: demo-neo4j
+      llm.apiKey: unused
+      image: quay.io/rh-ai-quickstart/general-simulation-api:dev
+      waitFor.enabled: true
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: general-sim-api
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: quay.io/rh-ai-quickstart/general-simulation-api:dev
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 8000
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: wait-for-deps
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: omits init container when waitFor is disabled
+    template: templates/deployment.yaml
+    set:
+      postgres.password: demo-pg
+      neo4j.password: demo-neo4j
+      llm.apiKey: unused
+      waitFor.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers

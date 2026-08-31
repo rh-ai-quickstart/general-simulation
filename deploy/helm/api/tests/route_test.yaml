@@ -1,0 +1,29 @@
+suite: api route
+templates:
+  - templates/route.yaml
+release:
+  name: general-simulation
+  namespace: general-simulation
+tests:
+  - it: renders OpenShift route when enabled
+    set:
+      route.enabled: true
+    asserts:
+      - isKind:
+          of: Route
+      - equal:
+          path: metadata.name
+          value: general-sim-api
+      - equal:
+          path: spec.to.name
+          value: general-sim-api
+      - equal:
+          path: spec.tls.termination
+          value: edge
+
+  - it: skips route on plain Kubernetes
+    set:
+      route.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

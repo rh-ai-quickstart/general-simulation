@@ -15,14 +15,14 @@ From the **repository root**:
 # Terminal 1 — data stores
 podman compose up -d
 uv run python -m src.graph.bootstrap
-uv run python scripts/seed_demo.py   # optional demo scenario opensky-uk-closure-001
+uv run python app/api/scripts/seed_demo.py   # optional demo scenario opensky-uk-closure-001
 
 # Terminal 2 — API
 cp .env.example .env   # LLM_BACKEND=fake is fine for UI work without a model
 uv run uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
 
 # Terminal 3 — UI
-cd apps/simulation-console
+cd app/frontend_ui
 npm install
 npm run dev
 ```
@@ -42,7 +42,7 @@ Vite proxies `/health`, `/query`, and `/admin` to `http://localhost:8000`. FastA
 | `/scenarios` | List / inject / delete simulation overlays |
 | `/query` | Impact ReAct query + solver + tool-call trace |
 
-After pulling map-related changes, **re-run** `uv run python scripts/seed_demo.py` from the repo root so Postgres gets demo lon/lat geometries. Without that, `/map` will be empty even if Neo4j already has the scenario.
+After pulling map-related changes, **re-run** `uv run python app/api/scripts/seed_demo.py` from the repo root so Postgres gets demo lon/lat geometries. Without that, `/map` will be empty even if Neo4j already has the scenario.
 
 ## Build
 
