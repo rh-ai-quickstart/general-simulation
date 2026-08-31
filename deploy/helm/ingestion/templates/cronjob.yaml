@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: general-sim-ingestion
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ingestion.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "ingestion.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+          containers:
+            - name: ingestion
+              image: {{ .Values.image }}
+              imagePullPolicy: Always
+              command:
+                - python
+                - -m
+                - src.ingestion
+                - --adapter
+                - {{ .Values.adapterId | quote }}
+              env:
+                - name: POSTGRES_DSN
+                  value: {{ include "ingestion.postgresDSN" . | quote }}
+                - name: NEO4J_URI
+                  value: {{ include "ingestion.neo4jURI" . | quote }}
+                - name: NEO4J_USER
+                  value: {{ .Values.neo4j.user | quote }}
+                - name: NEO4J_PASSWORD
+                  value: {{ required "neo4j.password is required" .Values.neo4j.password | quote }}
+                - name: LLM_BASE_URL
+                  value: {{ .Values.llm.baseUrl | quote }}
+                - name: LLM_BACKEND
+                  value: {{ .Values.llm.backend | quote }}
+                - name: OPENAI_API_KEY
+                  value: {{ .Values.llm.apiKey | quote }}
+                - name: GENERATION_MODEL_ID
+                  value: {{ .Values.models.generation | quote }}
+                - name: EMBEDDING_MODEL_ID
+                  value: {{ .Values.models.embedding | quote }}
+                - name: EMBEDDING_DIMENSION
+                  value: {{ .Values.models.embeddingDimension | quote }}
+                - name: ENABLED_DOMAINS
+                  value: {{ .Values.enabledDomains | quote }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

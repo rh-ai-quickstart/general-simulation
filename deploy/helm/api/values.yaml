@@ -1,0 +1,65 @@
+image: quay.io/robertsandoval/general-sim-app:latest
+
+replicas: 1
+
+# OpenShift Route (route.openshift.io/v1). Off for Kind / plain Kubernetes.
+route:
+  enabled: true
+
+# Block the API container until Postgres + Neo4j accept TCP connections.
+# Complements app-level lifespan retries (src.core.db.wait_for_*).
+waitFor:
+  enabled: true
+  # Seconds to poll each dependency before failing the init container.
+  timeoutSeconds: 300
+  # startupProbe: periodSeconds(5) * failureThreshold — allow lifespan DB waits.
+  startupFailureThreshold: 60
+
+postgres:
+  # Short name — resolves in the release namespace (standalone or as a subchart).
+  # Cross-namespace clients should use postgres.<ns>.svc instead.
+  host: postgres
+  port: 5432
+  user: sim
+  password: ""   # required — pass via --set postgres.password=<pw>
+  database: sim
+
+neo4j:
+  # Short name — same-namespace Service DNS (see postgres.host note above).
+  host: neo4j
+  port: 7687
+  user: neo4j
+  password: ""   # required — pass via --set neo4j.password=<pw>
+
+llm:
+  # Base URL for the OpenAI-compatible inference endpoint.
+  # Override to point at a self-hosted model (vLLM, Llama Stack, Ollama, etc.):
+  #   --set llm.baseUrl=http://vllm:8080/v1
+  #   --set llm.baseUrl=http://llamastack:8321/v1
+  # Cross-namespace: http://vllm.<ns>.svc:8080/v1
+  baseUrl: "https://api.openai.com/v1"
+  # API key — pass via --set llm.apiKey=<key>
+  # Set to any non-empty string for self-hosted endpoints that don't require auth.
+  apiKey: ""
+  # Backend selector: openai | llamastack | fake
+  backend: "openai"
+
+models:
+  generation: gpt-4o-mini
+  embedding: text-embedding-3-small
+  embeddingDimension: "1536"
+
+# Comma-separated domain packages to load (adapters + optional solvers).
+enabledDomains: aviation
+
+# Expose run_ingestion_pull on POST /query. Off by default: OpenSky from
+# hyperscaler clusters typically ConnectTimeout (~20s) and stalls ReAct.
+enableReactIngestionTool: false
+
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 1Gi
+    cpu: "1"

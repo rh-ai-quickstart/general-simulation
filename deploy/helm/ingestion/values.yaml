@@ -1,0 +1,43 @@
+image: quay.io/robertsandoval/general-sim-app:latest
+
+# Cron schedule (default: every 10 minutes).
+schedule: "*/10 * * * *"
+
+# Adapter to run. Must match an adapter_id from an ENABLED_DOMAINS package.
+adapterId: opensky_flights
+
+# Comma-separated domain packages to load (adapters + optional solvers).
+enabledDomains: aviation
+
+postgres:
+  # Short name — resolves in the release namespace (standalone or as a subchart).
+  host: postgres
+  port: 5432
+  user: sim
+  password: ""   # required — pass via --set postgres.password=<pw>
+  database: sim
+
+neo4j:
+  # Short name — same-namespace Service DNS.
+  host: neo4j
+  port: 7687
+  user: neo4j
+  password: ""   # required — pass via --set neo4j.password=<pw>
+
+llm:
+  baseUrl: "https://api.openai.com/v1"
+  apiKey: ""
+  backend: "openai"
+
+models:
+  generation: gpt-4o-mini
+  embedding: text-embedding-3-small
+  embeddingDimension: "1536"
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+    cpu: 500m
