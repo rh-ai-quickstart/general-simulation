@@ -20,7 +20,7 @@
 #   make deploy-ingestion PG_PASSWORD=<pw>
 #
 # Variable overrides (pass on the command line):
-#   REGISTRY         Image registry root  (default: quay.io/robertsandoval)
+#   REGISTRY         Image registry root  (default: quay.io/rh-ai-quickstart)
 #   NAMESPACE        OpenShift namespace  (default: general-simulation)
 #   TAG              Image tag            (default: latest)
 #   PG_PASSWORD      Postgres password    (no default — required for deploy targets)
@@ -39,7 +39,7 @@ TAG              ?= latest
 PG_PASSWORD      ?=
 NEO4J_PASSWORD   ?=
 OPENAI_API_KEY   ?=
-CHART_REPO_URL   ?= https://robertsandoval.github.io/general-simulation
+CHART_REPO_URL   ?= https://rh-ai-quickstart.github.io/general-simulation
 
 # ── Derived image references ──────────────────────────────────────────────────
 IMG_POSTGRES := $(REGISTRY)/general-sim-postgres:$(TAG)
@@ -141,14 +141,10 @@ build-app: _guard-podman
 	  .
 	podman push $(IMG_APP)
 
-# ── Namespace bootstrap ───────────────────────────────────────────────────────
-_deploy-namespace: _guard-oc
-	oc apply -f deploy/openshift/namespace.yaml
-
 # ── Component deploy targets ──────────────────────────────────────────────────
 
 ## Step 1 — Postgres
-deploy-postgres: _guard-pg-password _guard-oc _guard-helm _deploy-namespace
+deploy-postgres: _guard-pg-password _guard-oc _guard-helm
 	@echo "==> Deploying Postgres..."
 	helm upgrade --install postgres $(CHART_POSTGRES) \
 	  $(HELM_COMMON) \
@@ -258,7 +254,7 @@ deploy: _guard-pg-password _guard-neo4j-password _guard-oc _guard-helm \
 	@printf "\n"
 
 ## Single-release umbrella deploy (subchart-friendly packaging)
-deploy-umbrella: _guard-pg-password _guard-neo4j-password _guard-oc _guard-helm _deploy-namespace
+deploy-umbrella: _guard-pg-password _guard-neo4j-password _guard-oc _guard-helm
 	@echo "==> Creating neo4j-auth secret..."
 	@oc delete secret neo4j-auth -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@oc create secret generic neo4j-auth \

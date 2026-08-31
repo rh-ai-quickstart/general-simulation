@@ -15,9 +15,9 @@ keywords:
   - neo4j
   - pgvector
   - postgis
-home: https://github.com/robertsandoval/general-simulation
+home: https://github.com/rh-ai-quickstart/general-simulation
 sources:
-  - https://github.com/robertsandoval/general-simulation
+  - https://github.com/rh-ai-quickstart/general-simulation
 maintainers:
   - name: general-sim
 

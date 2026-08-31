@@ -16,7 +16,7 @@ In-cluster defaults use **short Service names** (`postgres`, `neo4j`, `general-s
 Once published:
 
 ```bash
-helm repo add general-simulation https://robertsandoval.github.io/general-simulation
+helm repo add general-simulation https://rh-ai-quickstart.github.io/general-simulation
 helm repo update
 helm search repo general-simulation
 ```
@@ -27,7 +27,7 @@ Parent / subchart dependency:
 dependencies:
   - name: general-simulation
     version: 0.1.0
-    repository: https://robertsandoval.github.io/general-simulation
+    repository: https://rh-ai-quickstart.github.io/general-simulation
     condition: general-simulation.enabled
 ```
 

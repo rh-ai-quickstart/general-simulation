@@ -165,7 +165,7 @@ Wire runtime config so this domain can run in local + Helm paths.
    document the --set overrides:
    enabledDomains=<DOMAIN_ID>
    adapterId=<adapter_id>
-4. Mention deploy/openshift/shared/configmaps.yaml ENABLED_DOMAINS if relevant
+4. Set `enabledDomains` in deploy/helm/api/values.yaml and deploy/helm/ingestion/values.yaml if relevant
 5. Do not invent new CronJob templates unless multiple adapters need different schedules
 
 End with a short "smoke test" checklist for a human operator.

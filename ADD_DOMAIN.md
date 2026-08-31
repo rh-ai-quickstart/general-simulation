@@ -397,8 +397,8 @@ adapterId: opensky_flights
 For a second adapter on a different schedule, add another CronJob (or Helm
 release) with the same `enabledDomains` and a different `adapterId`.
 
-OpenShift ConfigMap (`deploy/openshift/shared/configmaps.yaml`) also carries
-`ENABLED_DOMAINS`.
+Helm values (`deploy/helm/api/values.yaml` and `deploy/helm/ingestion/values.yaml`)
+also carry `enabledDomains`.
 
 ---
 

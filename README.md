@@ -284,7 +284,7 @@ src/
     fake.py                  # FakeLLMClient for tests (supports response_sequence)
     types.py                 # Message / ToolCall / GenerateResult / Chunk
   api/                       # FastAPI entrypoint + admin SPA
-deploy/                      # Containerfiles, Helm charts, OpenShift manifests
+deploy/                      # Containerfiles and Helm charts
 tests/
 ```
 
@@ -407,9 +407,6 @@ OPENAI_API_KEY=unused
 LLM_BACKEND=openai
 ```
 
-Archived Llama Stack Helm chart and build configs are preserved under
-`deploy/archived/` if you want to bring it back as a sidecar.
-
 ### Running without a GPU (CI / dev laptops)
 
 Set `LLM_BACKEND=fake` in `.env`. `FakeLLMClient` provides:
@@ -471,7 +468,6 @@ make deploy PG_PASSWORD=<your-password>
 | `neo4j` | `neo4j/neo4j` (official chart) | StatefulSet, Services, OpenShift Route (Browser UI) |
 | `bootstrap` | `deploy/helm/bootstrap` | Job (Helm post-install/upgrade hook — auto-deleted on success) |
 | `vllm` | `deploy/helm/vllm` | Deployment, Service, PVC (30 Gi) |
-| `llamastack` | `deploy/archived/llamastack-helm` | (archived — see `deploy/archived/` to restore) |
 | `api` | `deploy/helm/api` | Deployment (2 replicas), Service, OpenShift Route, ConfigMap, Secret |
 | `ingestion` | `deploy/helm/ingestion` | CronJob (every 10 min, `concurrencyPolicy: Forbid`) |
 
@@ -480,7 +476,7 @@ make deploy PG_PASSWORD=<your-password>
 ### Step 1 — Build and push container images
 
 ```bash
-# Build all images (postgres + app) and push to quay.io/robertsandoval/
+# Build all images (postgres + app) and push to quay.io/rh-ai-quickstart/
 make build
 
 # Or build individual images:
@@ -539,16 +535,10 @@ make deploy-vllm
 Deploys the `vllm` chart (plain Deployment + 30 Gi PVC).  The Deployment
 targets GPU nodes via `nodeSelector: nvidia.com/gpu.present: "true"` and
 runs vLLM with `--enable-auto-tool-choice` and `--tool-call-parser=llama3_json`
-so Llama Stack tool calling works correctly.
+so structured tool calling works correctly.
 
 > The `--wait --timeout 15m` flag is used here because the GPU pod may take
 > several minutes to pull the model weights on first start.
-
-**Alternative — KServe InferenceService** (requires OpenShift AI / RHOAI):
-
-```bash
-oc apply -f deploy/openshift/vllm/inferenceservice.yaml
-```
 
 ---
 
@@ -626,7 +616,7 @@ Override defaults on the command line:
 
 | Variable | Default | Description |
 |---|---|---|
-| `REGISTRY` | `quay.io/robertsandoval` | Image registry root |
+| `REGISTRY` | `quay.io/rh-ai-quickstart` | Image registry root |
 | `NAMESPACE` | `general-simulation` | Target OpenShift namespace |
 | `TAG` | `latest` | Image tag for all built images |
 | `PG_PASSWORD` | *(none)* | Postgres password — required for deploy targets |
@@ -649,8 +639,4 @@ Short names resolve inside the release namespace (standalone or when this chart 
 
 The umbrella chart under `deploy/helm/general-simulation` can be installed as a single release (`make deploy-umbrella`) or published to GitHub Pages for use as a Helm subchart. See [`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md).
 
----
-
-Raw Kubernetes manifests (pre-Helm) are preserved under `deploy/openshift/` for
-reference.  The Helm charts under `deploy/helm/` are the authoritative
-deployment path going forward.
+Chart repository: `https://rh-ai-quickstart.github.io/general-simulation`

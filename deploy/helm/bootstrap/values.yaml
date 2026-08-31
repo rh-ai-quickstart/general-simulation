@@ -1,4 +1,4 @@
-image: quay.io/robertsandoval/general-sim-app:latest
+image: quay.io/rh-ai-quickstart/general-simulation-api:latest
 
 # Block bootstrap until Postgres + Neo4j accept TCP connections.
 waitFor:

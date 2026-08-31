@@ -2,7 +2,7 @@
 # Override sensitive values with --set on the command line; never commit them.
 
 # Container image (override with --set image=... or make build-postgres)
-image: quay.io/robertsandoval/general-sim-postgres:latest
+image: quay.io/rh-ai-quickstart/general-sim-postgres:latest
 
 # Database credentials
 # postgres.password has no default — pass via: --set postgres.password=<pw>

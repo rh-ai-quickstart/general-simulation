@@ -7,7 +7,7 @@
 #   podman run --env-file .env -p 8000:8000 general-sim-app:latest
 #
 # Push to registry:
-#   podman push quay.io/robertsandoval/general-sim-app:latest
+#   podman push quay.io/rh-ai-quickstart/general-simulation-api:latest
 #
 # Design notes:
 #   - UBI9 Python 3.11 base (Red Hat supported, OCI-compliant).

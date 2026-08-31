@@ -21,7 +21,7 @@ services:
     # docker.io/library/postgres, which fails when Hub credentials are stale.
     # To rebuild locally instead: uncomment the build: block and set
     # image: general-sim-postgres:local
-    image: quay.io/robertsandoval/general-sim-postgres:latest
+    image: quay.io/rh-ai-quickstart/general-sim-postgres:latest
     # build:
     #   context: deploy/postgres
     #   dockerfile: Containerfile
