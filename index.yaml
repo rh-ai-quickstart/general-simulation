@@ -3,7 +3,7 @@ entries:
   general-simulation:
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-08-31T16:03:03.186663228Z"
+    created: "2026-08-31T15:15:17.128776-04:00"
     dependencies:
     - condition: postgres.enabled
       name: postgres
@@ -34,8 +34,8 @@ entries:
       API, and the ingestion CronJob. Optional vLLM is off by default. Install standalone
       into any namespace, or consume as a Helm subchart from a parent application
       (same release namespace as the parent). '
-    digest: b26249b40fddb5cd43e44ed5471d3faf4d322dcd0c0d85325c1669245d6c52ed
-    home: https://github.com/robertsandoval/general-simulation
+    digest: 9c2a8605de0e18663347bf8545943f6f4adcdd9721fa49469cbd4e60eb0ff963
+    home: https://github.com/rh-ai-quickstart/general-simulation
     keywords:
     - simulation
     - neo4j
@@ -45,9 +45,9 @@ entries:
     - name: general-sim
     name: general-simulation
     sources:
-    - https://github.com/robertsandoval/general-simulation
+    - https://github.com/rh-ai-quickstart/general-simulation
     type: application
     urls:
-    - https://robertsandoval.github.io/general-simulation/general-simulation-0.1.1.tgz
+    - https://rh-ai-quickstart.github.io/general-simulation/general-simulation-0.1.1.tgz
     version: 0.1.1
-generated: "2026-08-31T16:03:03.18278589Z"
+generated: "2026-08-31T15:15:17.125-04:00"
