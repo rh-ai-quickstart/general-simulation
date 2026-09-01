@@ -3,7 +3,7 @@ entries:
   general-simulation:
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-09-01T15:05:27.734833-04:00"
+    created: "2026-09-01T19:06:24.495278142Z"
     dependencies:
     - condition: postgres.enabled
       name: postgres
@@ -48,11 +48,11 @@ entries:
     - https://github.com/rh-ai-quickstart/general-simulation
     type: application
     urls:
-    - https://rh-ai-quickstart.github.io/general-simulation/general-simulation-0.1.1.tgz
+    - https://robertsandoval.github.io/general-simulation/general-simulation-0.1.1.tgz
     version: 0.1.1
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-09-01T15:05:27.731397-04:00"
+    created: "2026-09-01T19:06:24.4910576Z"
     dependencies:
     - condition: postgres.enabled
       name: postgres
@@ -90,7 +90,7 @@ entries:
       → in-cluster llm-service (vLLM)  Install standalone into any namespace, or consume
       as a Helm subchart from a parent application (same release namespace as the
       parent). '
-    digest: 439d06d53cf95b1df065c7bafbd0abf61a5ec5bf555cb228fa391171ca179269
+    digest: e6d124574520cce0ae66a07f93ebcccd520855ab3e8c14cb2d002483c3d19009
     home: https://github.com/robertsandoval/general-simulation
     keywords:
     - simulation
@@ -105,6 +105,6 @@ entries:
     - https://github.com/robertsandoval/general-simulation
     type: application
     urls:
-    - https://rh-ai-quickstart.github.io/general-simulation/general-simulation-0.0.1.tgz
+    - https://robertsandoval.github.io/general-simulation/general-simulation-0.0.1.tgz
     version: 0.0.1
-generated: "2026-09-01T15:05:27.726626-04:00"
+generated: "2026-09-01T19:06:24.485637955Z"
