@@ -59,7 +59,6 @@ def _settings() -> Settings:
         postgres_dsn="postgresql://mock:mock@localhost/mock",
         llm_backend="fake",
         embedding_dimension=16,
-        enable_react_ingestion_tool=False,
     )
 
 
@@ -606,62 +605,3 @@ async def test_post_query_missing_required_fields():
         app.dependency_overrides.pop(get_neo4j_driver, None)
         app.dependency_overrides.pop(get_llm_client, None)
         app.dependency_overrides.pop(get_solver, None)
-
-
-# ── ReAct ingestion tool flag ──────────────────────────────────────────────────
-
-
-def test_agent_tools_omit_ingestion_by_default():
-    from src.reasoning.pipeline import _agent_tools
-
-    names = [t["function"]["name"] for t in _agent_tools(_settings())]
-    assert names == [
-        "get_affected_subgraph",
-        "solve_impact",
-        "search_scenario_context",
-    ]
-
-
-def test_agent_tools_include_ingestion_when_enabled():
-    from src.reasoning.pipeline import _agent_tools
-
-    settings = Settings(
-        postgres_dsn="postgresql://mock:mock@localhost/mock",
-        llm_backend="fake",
-        embedding_dimension=16,
-        enable_react_ingestion_tool=True,
-    )
-    names = [t["function"]["name"] for t in _agent_tools(settings)]
-    assert "run_ingestion_pull" in names
-
-
-def test_system_prompt_omits_ingestion_when_disabled():
-    from src.reasoning.pipeline import _system_prompt
-
-    prompt = _system_prompt(_settings())
-    assert "run_ingestion_pull" not in prompt
-    assert "get_affected_subgraph" in prompt
-
-
-@pytest.mark.asyncio
-async def test_dispatch_ingestion_disabled_does_not_fetch():
-    from src.llm.types import ToolCall
-    from src.reasoning.pipeline import _AgentState, _dispatch_tool
-
-    tc = ToolCall(
-        call_id="tc-ing",
-        tool_name="run_ingestion_pull",
-        arguments={"adapter_id": "opensky_flights"},
-    )
-    out = await _dispatch_tool(
-        tc,
-        driver=MagicMock(),
-        pool=MagicMock(),
-        llm_client=_fake_client(),
-        solver=StubSolver(),
-        state=_AgentState(),
-        scenario_id=SCENARIO_ID,
-        settings=_settings(),
-    )
-    assert out["success"] is False
-    assert "disabled" in out["error"]

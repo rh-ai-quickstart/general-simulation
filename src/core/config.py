@@ -17,10 +17,10 @@ class Settings(BaseSettings):
 
     # --- Domain loading ---
     enabled_domains: str = Field(
-        default="aviation",
+        default="aviation,shipping",
         description=(
             "Comma-separated domain ids to load "
-            "(e.g. 'aviation' or 'aviation,earthquakes'). "
+            "(e.g. 'aviation,shipping'). "
             "Controls which adapters (and domain solvers) are registered."
         ),
     )
@@ -89,17 +89,6 @@ class Settings(BaseSettings):
     embedding_dimension: int = Field(
         default=1536,
         description="Vector dimension of the chosen embedding model.",
-    )
-
-    # --- ReAct tools ---
-    enable_react_ingestion_tool: bool = Field(
-        default=False,
-        description=(
-            "When true, expose run_ingestion_pull to the /query ReAct agent. "
-            "Keep false on clusters where adapters (e.g. OpenSky) cannot reach "
-            "the source — a 20s ConnectTimeout otherwise stalls every follow-up. "
-            "Scheduled CronJob ingestion is independent of this flag."
-        ),
     )
 
     @field_validator("enabled_domains", mode="before")

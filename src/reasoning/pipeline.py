@@ -31,7 +31,6 @@ from typing import Any
 import asyncpg
 from neo4j import AsyncDriver
 
-from src.core.config import Settings
 from src.core.solver import AffectedSubgraph, LiveState, Solver, SolverResult
 from src.graph.tool import GET_SUBGRAPH_TOOL_SCHEMA
 from src.ingestion.tool import call_ingestion_tool, get_ingestion_tool_schema
@@ -56,31 +55,21 @@ logger = logging.getLogger(__name__)
 # Safety cap: max tool-calling rounds before forcing a final answer.
 _MAX_AGENT_ROUNDS = 6
 
-_SYSTEM_PROMPT_CORE = """\
+_SYSTEM_PROMPT = """\
 You are an expert operational impact analyst specialising in aviation and logistics disruptions.
-You have tools to investigate a simulation scenario before answering:
+You have four tools to investigate a simulation scenario before answering:
 
   • get_affected_subgraph    — discover which entities are affected and how they are connected
   • solve_impact             — compute impact score, chain length, value at risk, response options, and recommended reroute targets
   • search_scenario_context  — retrieve the event narrative from the vector store
-"""
-
-_SYSTEM_PROMPT_INGESTION = """\
   • run_ingestion_pull       — refresh live entity positions/status from an external feed
-"""
 
-_SYSTEM_PROMPT_SEQUENCE = """\
 Recommended investigation sequence:
   1. Call get_affected_subgraph to understand the scope.
   2. Call solve_impact to quantify the operational and economic impact.
   3. Call search_scenario_context to ground your answer in the event narrative.
-"""
-
-_SYSTEM_PROMPT_INGESTION_STEP = """\
   4. Optionally call run_ingestion_pull if the question requires up-to-date positions.
-"""
 
-_SYSTEM_PROMPT_RULES = """\
 Rules:
   - Always refer to aircraft by callsign, not raw entity ID.
   - Do NOT invent impact figures — use only what the tools return.
@@ -126,31 +115,15 @@ SOLVER_TOOL_SCHEMA_STANDALONE: dict[str, Any] = {
     },
 }
 
-
-def _system_prompt(settings: Settings | None = None) -> str:
-    settings = settings or Settings()
-    parts = [_SYSTEM_PROMPT_CORE]
-    if settings.enable_react_ingestion_tool:
-        parts.append(_SYSTEM_PROMPT_INGESTION)
-    parts.append(_SYSTEM_PROMPT_SEQUENCE)
-    if settings.enable_react_ingestion_tool:
-        parts.append(_SYSTEM_PROMPT_INGESTION_STEP)
-    parts.append(_SYSTEM_PROMPT_RULES)
-    return "".join(parts)
-
-
-# Ordered list of tools exposed to the agent (schema rebuilt per call so
-# ENABLED_DOMAINS / ENABLE_REACT_INGESTION_TOOL changes are reflected).
-def _agent_tools(settings: Settings | None = None) -> list[dict[str, Any]]:
-    settings = settings or Settings()
-    tools = [
+# Ordered list of all tools exposed to the agent (schema rebuilt per call so
+# ENABLED_DOMAINS changes are reflected without restarting imports).
+def _agent_tools() -> list[dict[str, Any]]:
+    return [
         GET_SUBGRAPH_TOOL_SCHEMA,
         SOLVER_TOOL_SCHEMA_STANDALONE,
         SEARCH_CONTEXT_TOOL_SCHEMA,
+        get_ingestion_tool_schema(),
     ]
-    if settings.enable_react_ingestion_tool:
-        tools.append(get_ingestion_tool_schema(settings))
-    return tools
 
 
 @dataclass
@@ -205,15 +178,8 @@ async def run_pipeline(
         driver, pool, request.scenario_id
     )
 
-    settings = Settings()
-    if not settings.enable_react_ingestion_tool:
-        logger.info(
-            "ReAct ingestion tool disabled (ENABLE_REACT_INGESTION_TOOL=false); "
-            "run_ingestion_pull will not be offered"
-        )
-
     messages: list[Message] = [
-        Message(role="system", content=_system_prompt(settings)),
+        Message(role="system", content=_SYSTEM_PROMPT),
         Message(
             role="user",
             content=(
@@ -228,7 +194,7 @@ async def run_pipeline(
     final_result = None
 
     for round_num in range(_MAX_AGENT_ROUNDS + 1):
-        result = await llm_client.generate(messages, tools=_agent_tools(settings))
+        result = await llm_client.generate(messages, tools=_agent_tools())
         final_result = result
 
         if not result.tool_calls or round_num == _MAX_AGENT_ROUNDS:
@@ -267,7 +233,6 @@ async def run_pipeline(
                 solver=_solver,
                 state=state,
                 scenario_id=request.scenario_id,
-                settings=settings,
             )
             state.tool_call_trace.append(
                 ToolCallRecord(
@@ -319,10 +284,8 @@ async def _dispatch_tool(
     solver: Solver,
     state: _AgentState,
     scenario_id: str,
-    settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Route a tool call to the correct callable, update agent state, return JSON result."""
-    settings = settings or Settings()
 
     if tc.tool_name == "get_affected_subgraph":
         sid = tc.arguments.get("scenario_id", scenario_id)
@@ -392,15 +355,6 @@ async def _dispatch_tool(
         return await call_search_tool(tc.arguments, llm_client)
 
     if tc.tool_name == "run_ingestion_pull":
-        if not settings.enable_react_ingestion_tool:
-            return {
-                "success": False,
-                "error": (
-                    "run_ingestion_pull is disabled "
-                    "(ENABLE_REACT_INGESTION_TOOL=false). "
-                    "Use seeded / CronJob live data instead."
-                ),
-            }
         return await call_ingestion_tool(tc.arguments, pool, neo4j_driver=driver)
 
     return {"success": False, "error": f"Unknown tool '{tc.tool_name}'."}

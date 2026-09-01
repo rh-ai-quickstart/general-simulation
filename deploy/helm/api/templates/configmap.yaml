@@ -12,7 +12,6 @@ data:
   EMBEDDING_MODEL_ID: {{ .Values.models.embedding | quote }}
   EMBEDDING_DIMENSION: {{ .Values.models.embeddingDimension | quote }}
   ENABLED_DOMAINS: {{ .Values.enabledDomains | quote }}
-  ENABLE_REACT_INGESTION_TOOL: {{ .Values.enableReactIngestionTool | default false | quote }}
   NEO4J_USER: {{ .Values.neo4j.user | quote }}
   # Lifespan retries Postgres/Neo4j until pools are ready (see src.core.db).
   STARTUP_DB_WAIT_SECONDS: {{ .Values.waitFor.timeoutSeconds | quote }}
