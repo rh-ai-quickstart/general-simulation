@@ -13,8 +13,8 @@
 # Per-component targets: make help
 #
 # Local testing (push to your Quay org, then deploy with the same REGISTRY):
-#   make build REGISTRY=quay.io/robertsandoval APP_IMAGE_NAME=general-sim-api
-#   make deploy REGISTRY=quay.io/robertsandoval APP_IMAGE_NAME=general-sim-api \
+#   make build REGISTRY=quay.io/rh-ai-quickstart APP_IMAGE_NAME=general-sim-api
+#   make deploy REGISTRY=quay.io/rh-ai-quickstart APP_IMAGE_NAME=general-sim-api \
 #     PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
 # =============================================================================
 
@@ -29,7 +29,7 @@ NEO4J_PASSWORD   ?=
 OPENAI_API_KEY   ?=
 HF_TOKEN         ?=
 LLM_MODE         ?= openai
-CHART_REPO_URL   ?= https://robertsandoval.github.io/general-simulation
+CHART_REPO_URL   ?= https://rh-ai-quickstart.github.io/general-simulation
 LLM_SERVICE_CHART_REPO ?= https://rh-ai-quickstart.github.io/ai-architecture-charts
 LLM_SERVICE_VERSION    ?= 0.5.9
 LLAMA_STACK_VERSION    ?= 0.8.5

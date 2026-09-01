@@ -1,7 +1,7 @@
 name: Publish Helm chart
 
 # Publishes the general-simulation umbrella chart to GitHub Pages
-# (https://robertsandoval.github.io/general-simulation).
+# (https://rh-ai-quickstart.github.io/general-simulation).
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
       - name: Build index and publish
         run: |
           set -euo pipefail
-          REPO_URL="https://robertsandoval.github.io/general-simulation"
+          REPO_URL="https://rh-ai-quickstart.github.io/general-simulation"
           mkdir -p publish
           if [[ -d gh-pages ]]; then
             cp -a gh-pages/. publish/ 2>/dev/null || true
