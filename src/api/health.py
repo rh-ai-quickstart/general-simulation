@@ -52,6 +52,8 @@ async def health(
     body = {
         "status": "ok" if db_ok else "degraded",
         "db": "reachable" if db_ok else "unreachable",
+        # Marker for post-deploy smoke checks (tool_choice forwarded to LLM).
+        "agent_tool_choice": True,
     }
     if not db_ok:
         return JSONResponse(status_code=503, content=body)

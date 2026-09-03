@@ -2,25 +2,29 @@
 
 Umbrella chart for the General Simulation & Impact-Reasoning Platform.
 
-Inference always goes through **Llama Stack**. Two modes only:
+Inference always goes through **Llama Stack**. Three modes:
 
 | Mode | Stack upstream | Extra requirements |
 |------|----------------|--------------------|
-| **openai** (default) | OpenAI (`api.openai.com`) | `OPENAI_API_KEY` |
+| **maas** (default) | LiteMaaS (`external-model/llama-scout-17b`) | `MAAS_API_TOKEN` |
+| **openai** | OpenAI (`api.openai.com`) | `OPENAI_API_KEY` |
 | **local** | In-cluster `llm-service` (vLLM) | OpenShift AI + `HF_TOKEN` |
 
-Prefer `make deploy` from the repo root — the chart creates Secret `neo4j-auth` and (on OpenShift) `neo4j-sa` + anyuid SCC when `openshift.neo4j.scc.enabled` is true.
+Prefer `make deploy` from the repo root. Consumer values live at **[`helm/values.yaml`](../../../helm/values.yaml)**.
+
+**Values mapping:** [`VALUES_MAPPING.md`](../../../VALUES_MAPPING.md) — how consumer
+values flow into subcharts, `global.*`, secrets, and LLM modes.
 
 ## Modes of install
 
 | Install | How | Namespace |
 |---------|-----|-----------|
-| **Standalone** | `make deploy` or `helm upgrade --install … -n <ns>` | Whatever `-n` you pass |
+| **Standalone** | `make deploy` or `helm upgrade --install … -f helm/values.yaml` | Whatever `-n` you pass |
 | **Subchart** | Parent `Chart.yaml` dependency + values | Same as the parent release |
 
 In-cluster defaults use **short Service names** (`postgres`, `neo4j`, `llamastack`, `general-sim-api`). Cross-namespace clients should use FQDNs such as `general-sim-api.<namespace>.svc:8000`.
 
-**Admin console:** served at `GET /admin/` on the API Service. On OpenShift, chart `0.0.1` creates Route `general-sim-admin` (path `/admin`) plus Route `general-sim-api` for the full API. Disable both on Kind: `--set api.route.enabled=false`.
+**Post-deploy smoke test:** `SEED_MODE=cluster make smoke-test` seeds the UK airspace closure demo and runs `POST /query`. JSON admin API at `/admin/*` remains for automation. Disable the API Route on Kind: `--set api.route.enabled=false`.
 
 ## Chart repository (GitHub Pages)
 
@@ -48,8 +52,13 @@ Legacy clients may still pin `0.2.0` until that version is retired from the char
 ## Recommended install (Makefile)
 
 ```bash
-# OpenAI via Llama Stack (default)
+# LiteMaaS via Llama Stack (default)
 make deploy \
+  PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
+  MAAS_API_TOKEN=<token>
+
+# OpenAI via Llama Stack
+make deploy LLM_MODE=openai \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   OPENAI_API_KEY=<key>
 
@@ -59,7 +68,7 @@ make deploy LLM_MODE=local \
   HF_TOKEN=<hf-token>
 ```
 
-## Manual Helm install (openai)
+## Manual Helm install (maas default)
 
 ```bash
 oc new-project general-simulation   # or --create-namespace below
@@ -70,25 +79,28 @@ helm dependency update deploy/helm/general-simulation
 
 helm upgrade --install general-simulation ./deploy/helm/general-simulation \
   --namespace general-simulation --create-namespace \
+  -f helm/values.yaml \
   --set global.registry=quay.io/<your-org> \
-  --set postgres.postgres.password=<PG_PASSWORD> \
-  --set api.postgres.password=<PG_PASSWORD> \
-  --set api.neo4j.password=<NEO4J_PASSWORD> \
-  --set bootstrap.postgres.password=<PG_PASSWORD> \
-  --set bootstrap.neo4j.password=<NEO4J_PASSWORD> \
-  --set ingestion.postgres.password=<PG_PASSWORD> \
-  --set ingestion.neo4j.password=<NEO4J_PASSWORD> \
-  --set-string global.models.openai.apiToken=<OPENAI_API_KEY> \
+  --set-string global.postgres.password=<PG_PASSWORD> \
+  --set-string global.neo4j.password=<NEO4J_PASSWORD> \
+  --set-string global.models.external-model.apiToken=<MAAS_API_TOKEN> \
   --wait --timeout 15m
 ```
+
+For **openai** mode, add `-f helm/values-openai.yaml` and pass
+`global.models.openai.apiToken` instead of the MaaS token.
+
+For **local** mode, add `-f helm/values-local.yaml` and pass
+`llm-service.secret.hf_token`.
+
+Optional: copy `helm/values-secrets.yaml.example` to `helm/values-secrets.yaml` (gitignored)
+and add `-f helm/values-secrets.yaml` instead of individual `--set-string` secret flags.
 
 On **Kind / plain Kubernetes**, disable OpenShift SCC resources:
 
 ```bash
 --set openshift.neo4j.scc.enabled=false
 ```
-
-For **local** mode, flip providers and enable llm-service (or use `make deploy LLM_MODE=local`).
 
 API and ingestion always call `http://llamastack:8321/v1` — never OpenAI or vLLM directly.
 
@@ -103,13 +115,17 @@ API and ingestion always call `http://llamastack:8321/v1` — never OpenAI or vL
 
 | Key | Default | Notes |
 |-----|---------|--------|
+| `llm.mode` | `maas` | Use `helm/values-openai.yaml` / `helm/values-local.yaml` overlays |
+| `global.postgres.password` | `""` | Required at install — shared by all subcharts |
+| `global.neo4j.password` | `""` | Required at install — shared by all subcharts |
 | `postgres.enabled` | `true` | Platform Postgres (pgvector + PostGIS) |
 | `neo4j.enabled` | `true` | Official `neo4j/neo4j` chart |
 | `bootstrap.enabled` | `true` | Schema Job (hook) |
 | `llama-stack.enabled` | `true` | Inference gateway |
 | `llm-service.enabled` | `false` | In-cluster vLLM (local mode) |
 | `api.enabled` | `true` | FastAPI |
-| `ingestion.enabled` | `true` | CronJob |
+| `ingestion.enabled` | `true` | CronJob + optional run-on-deploy hook Job |
+| `ingestion.runOnDeploy.enabled` | `true` | First ingestion pull right after `helm install/upgrade` (no 10‑min wait) |
 
 ## Publishing a new chart version
 

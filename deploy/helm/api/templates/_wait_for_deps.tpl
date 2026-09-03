@@ -14,8 +14,8 @@ initContainers:
       - |
         import socket, sys, time
         targets = [
-            ({{ .Values.postgres.host | quote }}, {{ .Values.postgres.port }}),
-            ({{ .Values.neo4j.host | quote }}, {{ .Values.neo4j.port }}),
+            ({{ include "api.postgresHost" . | quote }}, {{ include "api.postgresPort" . }}),
+            ({{ include "api.neo4jHost" . | quote }}, {{ include "api.neo4jPort" . }}),
         ]
         timeout = {{ .Values.waitFor.timeoutSeconds }}
         deadline = time.time() + timeout

@@ -51,6 +51,7 @@ class OpenAIClient:
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> GenerateResult:
         sdk_messages: list[dict[str, Any]] = []
         for m in messages:
@@ -76,6 +77,9 @@ class OpenAIClient:
         )
         if tools:
             kwargs["tools"] = tools
+            kwargs["tool_choice"] = (
+                tool_choice if tool_choice is not None else "auto"
+            )
 
         response = await self._ai.chat.completions.create(**kwargs)
         choice = response.choices[0]
@@ -92,6 +96,15 @@ class OpenAIClient:
                         arguments=json.loads(tc.function.arguments),
                     )
                 )
+
+        if tools and not tool_calls:
+            logger.warning(
+                "LLM returned no structured tool_calls (finish_reason=%s, "
+                "tool_choice=%s, content_preview=%r)",
+                choice.finish_reason,
+                kwargs.get("tool_choice"),
+                (content or "")[:240],
+            )
 
         stop_reason = (
             "end_of_message" if choice.finish_reason == "tool_calls" else "end_of_turn"

@@ -9,7 +9,7 @@ A **domain-agnostic** simulation and impact-reasoning platform built on:
 | Dependency graph | **Neo4j** (native async driver, Cypher queries) |
 | Live / geo snapshot | PostGIS, queried directly |
 | API | FastAPI |
-| Admin UI | Built-in SPA at `/admin/` |
+| Admin API | JSON endpoints at `/admin/*` (automation / scripts) |
 | Dependency management | [uv](https://docs.astral.sh/uv/) |
 
 > **Core design rule:** Live ground-truth data is **never mutated** by a simulation.
@@ -67,11 +67,12 @@ OpenShift is the deployment substrate and a fixed requirement, not an interchang
 
 ### Llama Stack — inference gateway
 
-On OpenShift, the API and ingestion CronJob always call **Llama Stack** (`http://llamastack:8321/v1`). Stack fronts exactly two modes:
+On OpenShift, the API and ingestion CronJob always call **Llama Stack** (`http://llamastack:8321/v1`). Stack fronts three modes:
 
 | Mode | Upstream | When to use |
 |---|---|---|
-| `openai` (default) | OpenAI API | No GPU / quickest path |
+| `maas` (default) | LiteMaaS (`external-model/llama-scout-17b`) | Workshop / shared MaaS endpoint |
+| `openai` | OpenAI API | No GPU / quickest path |
 | `local` | In-cluster `llm-service` (vLLM on OpenShift AI) | Keep weights inside the cluster |
 
 ### LLM client — the inference and RAG backend
@@ -117,23 +118,28 @@ never the simulation overlay. Which domain packages load is controlled by
 Each adapter runs two ways: as a scheduled OpenShift CronJob for steady polling, and as an on-demand callable that the reasoning agent can trigger mid-query when it needs current data.
 
 
-### Admin UI — browse and manage data
+### Admin JSON API
 
-A built-in single-page application is served at `GET /admin/`. It provides a read/write view over both stores without any extra tooling:
+REST endpoints under `/admin` support automation: ingestion runs, graph browsing, scenario injection, and imports. Use `seed-demo` and `POST /query` for post-deploy smoke tests (see [Demo against a live deployment](#6-demo-against-a-live-deployment)).
 
 | Route | Description |
 |---|---|
-| `GET /admin/` | Admin SPA (HTML) |
 | `GET /admin/stats` | Aggregate counts from Postgres and Neo4j |
 | `GET /admin/entity-types` | Distinct entity types in the live store |
 | `GET /admin/entities` | Paginated entity list with search/filter |
 | `GET /admin/entities/{id}` | Entity detail and state history |
+| `GET /admin/ingestion/adapters` | List enabled ingestion adapters |
+| `POST /admin/ingestion/run` | On-demand adapter run |
+| `POST /admin/imports/preview` | Validate an import file |
+| `POST /admin/imports/commit` | Commit entities + dependency edges |
 | `GET /admin/graph/nodes` | Entity nodes from Neo4j |
 | `GET /admin/graph/scenarios` | Distinct scenario IDs |
 | `GET /admin/graph/events` | SimulationEvent nodes (optional scenario filter) |
 | `GET /admin/graph/edges` | All dependency / AFFECTED_BY edges |
 | `POST /admin/graph/events` | Inject a new simulation event overlay |
 | `DELETE /admin/graph/scenarios/{id}` | Remove a scenario from the graph and vector store |
+
+The React Simulation Console (`frontend_ui/`) is not shipped in the current release; it will return as a separate feature branch.
 
 ### The ReAct agent pipeline
 
@@ -294,7 +300,7 @@ src/
     openai_client.py         # OpenAI-compatible inference + pgvector RAG
     fake.py                  # FakeLLMClient for tests (supports response_sequence)
     types.py                 # Message / ToolCall / GenerateResult / Chunk
-  api/                       # FastAPI entrypoint + admin SPA
+  api/                       # FastAPI entrypoint + JSON admin API (/admin/*)
 deploy/                      # Containerfiles, Helm charts, OpenShift manifests
 tests/
 ```
@@ -347,7 +353,6 @@ uv run uvicorn src.api.app:app --reload
 ```
 
 Visit `http://localhost:8000/health` — returns `{"status": "ok", "db": "reachable"}` when Postgres is reachable.
-Visit `http://localhost:8000/admin/` for the admin SPA (requires both Postgres and Neo4j).
 
 ### 5. Run tests (no GPU or live Llama Stack required)
 
@@ -358,21 +363,25 @@ uv run pytest
 
 ### 6. Demo against a live deployment
 
-Two helpers are included for smoke-testing a running cluster:
+CLI helpers for smoke-testing a running cluster (UK airspace closure scenario):
 
 ```bash
-# Run a canned query against the deployed API
+# Seed demo entities + UK closure overlay, then POST /query
+make smoke-test
+# or with in-cluster seeding after deploy:
+SEED_MODE=cluster NAMESPACE=general-simulation make smoke-test
+
+# Seed only (local or in-cluster)
+uv run seed-demo
+
+# Query only (defaults to UK airspace closure)
 ./demo.sh [scenario_id] [question]
 
-# Seed aviation UK-closure demo (Neo4j + Postgres)
-uv run python scripts/seed_demo.py
-
-# Seed shipping LA-closure demo (fixture ingest + graph + overlay)
+# Shipping LA-closure demo (fixture ingest + graph + overlay)
 uv run python scripts/seed_shipping.py
 ```
 
-`demo.sh` defaults to the shipping LA port-closure scenario.
-`seed_demo.py` / `seed_shipping.py` create sample entities, dependency edges, and a simulation event so the full pipeline can be exercised end to end.
+`seed-demo` / `scripts/seed_demo.py` create sample aircraft, dependency edges, and the `opensky-uk-closure-001` simulation event so the full pipeline can be exercised end to end.
 
 ---
 
@@ -471,8 +480,13 @@ make build
 # 3. One umbrella release (Postgres + Neo4j + Llama Stack + API + ingestion)
 #    Secrets via --set only — never committed to values files.
 
-# Default: Llama Stack → OpenAI
+# Default: Llama Stack → LiteMaaS
 make deploy \
+  PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
+  MAAS_API_TOKEN=<token>
+
+# Or: Llama Stack → OpenAI
+make deploy LLM_MODE=openai \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   OPENAI_API_KEY=<key>
 
@@ -484,7 +498,7 @@ make deploy LLM_MODE=local \
 
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
 `make deploy` applies the umbrella Helm chart, which creates `neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack for the chosen
-`LLM_MODE` (`openai` or `local`).
+`LLM_MODE` (`maas`, `openai`, or `local`).
 
 ---
 
@@ -492,7 +506,7 @@ make deploy LLM_MODE=local \
 
 | Chart | Path | Key resources |
 |---|---|---|
-| `general-simulation` (umbrella) | `deploy/helm/general-simulation` | Single release; pulls subcharts below |
+| `general-simulation` (umbrella) | `deploy/helm/general-simulation` | Single release; values in [`helm/values.yaml`](helm/values.yaml) |
 | `postgres` | `deploy/helm/postgres` | StatefulSet, Services, anyuid SCC, Secret, init SQL |
 | `neo4j` | `neo4j/neo4j` (official) | StatefulSet; `neo4j-sa` + anyuid for UID 7474 |
 | `bootstrap` | `deploy/helm/bootstrap` | Schema Job (Helm hook) |
@@ -602,7 +616,7 @@ Requires Red Hat OpenShift AI (KServe). First start downloads model weights and
 can take several minutes. Do **not** point the API at vLLM directly — Stack is
 the only client of that Service.
 
-Legacy plain Deployment manifests remain under `deploy/openshift/vllm/` and
+Legacy pre-Helm manifests are under `deploy/archived/openshift/` and
 `deploy/archived/vllm-helm/` for reference only.
 
 ---
@@ -669,7 +683,8 @@ make undeploy
 ```bash
 make help
 make build
-make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
+make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> MAAS_API_TOKEN=<tok>
+make deploy LLM_MODE=openai PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
 make deploy LLM_MODE=local PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> HF_TOKEN=<tok>
 make neo4j-connect
 make status
@@ -681,13 +696,14 @@ make undeploy
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_MODE` | `openai` | `openai` or `local` |
+| `LLM_MODE` | `maas` | `maas`, `openai`, or `local` |
 | `REGISTRY` | `quay.io/rh-ai-quickstart` | Image registry root |
 | `APP_IMAGE_NAME` | `general-sim-api` | App image name under `REGISTRY` |
 | `NAMESPACE` | `general-simulation` | Target OpenShift namespace |
 | `TAG` | `latest` | Image tag |
 | `PG_PASSWORD` | *(none)* | Required |
 | `NEO4J_PASSWORD` | *(none)* | Required |
+| `MAAS_API_TOKEN` | *(none)* | Required when `LLM_MODE=maas` |
 | `OPENAI_API_KEY` | *(none)* | Required when `LLM_MODE=openai` |
 | `HF_TOKEN` | *(none)* | Required when `LLM_MODE=local` |
 
@@ -703,15 +719,16 @@ Short names resolve inside the release namespace (standalone or when this chart 
 | Neo4j Bolt | `bolt://neo4j:7687` | `bolt://neo4j.general-simulation.svc:7687` |
 | Neo4j HTTP | `http://neo4j:7474` | `http://neo4j.general-simulation.svc:7474` |
 | Llama Stack | `http://llamastack:8321` | `http://llamastack.<ns>.svc:8321` |
-| vLLM (`llm-service`, local mode) | `http://llama-3-2-3b-instruct-vllm` | `http://llama-3-2-3b-instruct-vllm.<ns>.svc` |
+| vLLM (`llm-service`, local mode) | `http://deepseek-r1-distill-qwen-1-5b-vllm` | `http://deepseek-r1-distill-qwen-1-5b-vllm.<ns>.svc` |
 | API | `http://general-sim-api:8000` | `http://general-sim-api.general-simulation.svc:8000` |
 
 The umbrella chart under `deploy/helm/general-simulation` is the primary
-install path (`make deploy`). See
-[`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md).
+install path (`make deploy`). Consumer values live at [`helm/values.yaml`](helm/values.yaml).
+See [`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md)
+and [`helm/README.md`](helm/README.md).
 
 ---
 
-Raw Kubernetes manifests (pre-Helm) are preserved under `deploy/openshift/` for
-reference.  The Helm charts under `deploy/helm/` are the authoritative
+Pre-Helm Kubernetes manifests are preserved under `deploy/archived/openshift/`
+for reference.  The Helm charts under `deploy/helm/` are the authoritative
 deployment path going forward.

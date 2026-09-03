@@ -56,8 +56,8 @@ class FakeLLMClient:
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> GenerateResult:
-        # Multi-step sequence takes priority (for ReAct pipeline tests).
         if self._response_sequence:
             return self._response_sequence.pop(0)
 

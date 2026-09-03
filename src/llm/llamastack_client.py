@@ -43,6 +43,7 @@ class LlamaStackClient:
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> GenerateResult:
         sdk_messages = [{"role": m.role, "content": m.content} for m in messages]
         response: ChatCompletionResponse = (

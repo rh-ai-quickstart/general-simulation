@@ -194,7 +194,28 @@ async def run_pipeline(
     final_result = None
 
     for round_num in range(_MAX_AGENT_ROUNDS + 1):
-        result = await llm_client.generate(messages, tools=_agent_tools())
+        # Remote providers (e.g. MaaS via Llama Stack) may emit plain-text tool
+        # lists unless tool_choice is explicit. Keep requiring tools until at
+        # least one has executed so investigation cannot stop on a text plan.
+        tool_choice = "required" if not state.tool_call_trace else "auto"
+        result = await llm_client.generate(
+            messages,
+            tools=_agent_tools(),
+            tool_choice=tool_choice,
+        )
+
+        if not result.tool_calls and not state.tool_call_trace:
+            logger.warning(
+                "ReAct pipeline: no tool_calls on round %d; retrying with "
+                "tool_choice=required",
+                round_num + 1,
+            )
+            result = await llm_client.generate(
+                messages,
+                tools=_agent_tools(),
+                tool_choice="required",
+            )
+
         final_result = result
 
         if not result.tool_calls or round_num == _MAX_AGENT_ROUNDS:

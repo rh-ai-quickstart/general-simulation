@@ -1,0 +1,154 @@
+# Primary values for standalone general-simulation deploy.
+#
+#   helm upgrade --install general-simulation ./deploy/helm/general-simulation \
+#     -f helm/values.yaml [-f helm/values-secrets.yaml]
+#
+# Optional mode overlays (replace MaaS defaults):
+#   -f helm/values-openai.yaml   (LLM_MODE=openai)
+#   -f helm/values-local.yaml    (LLM_MODE=local)
+#
+# Inference always goes through Llama Stack (http://llamastack:8321/v1).
+# Credentials: set global.postgres.password and global.neo4j.password via
+# --set, make deploy, or helm/values-secrets.yaml — never commit secrets.
+
+openshift:
+  neo4j:
+    scc:
+      enabled: true
+
+llm:
+  mode: maas
+
+global:
+  registry: quay.io/robertsandoval
+  imageTag: latest
+  images:
+    app: general-sim-api
+    postgres: general-sim-postgres
+
+  postgres:
+    host: postgres
+    port: 5432
+    user: sim
+    password: ""
+    database: sim
+  neo4j:
+    host: neo4j
+    port: 7687
+    user: neo4j
+    password: ""
+
+  # Models registered with Llama Stack (merged into the llama-stack subchart).
+  # Provider KEY must be DNS-safe. Remote providers set url + apiToken.
+  models:
+    openai:
+      enabled: false
+      id: gpt-4o-mini
+      url: https://api.openai.com/v1
+      apiToken: ""
+    external-model:
+      enabled: true
+      id: llama-scout-17b
+      url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+      apiToken: ""
+    # In-cluster vLLM — llm-service creates InferenceService when url is unset.
+    deepseek-r1-distill-qwen-1-5b:
+      enabled: false
+      id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+      apiToken: unused
+
+postgres:
+  enabled: true
+
+neo4j:
+  enabled: true
+  disableLookups: true
+  fullnameOverride: neo4j
+  config:
+    server.bolt.advertised_address: ":443"
+    server.http.advertised_address: ":443"
+  neo4j:
+    acceptLicenseAgreement: "yes"
+    edition: community
+    name: neo4j
+    passwordFromSecret: neo4j-auth
+    resources:
+      cpu: "2"
+      memory: 4Gi
+  podSpec:
+    serviceAccountName: neo4j-sa
+  services:
+    neo4j:
+      enabled: false
+  volumes:
+    data:
+      mode: defaultStorageClass
+      defaultStorageClass:
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 10Gi
+
+bootstrap:
+  enabled: true
+  waitFor:
+    enabled: true
+    timeoutSeconds: 300
+
+llama-stack:
+  enabled: true
+  rawDeploymentMode: true
+  pgvector:
+    enabled: true
+
+llm-service:
+  enabled: false
+  device: gpu
+  rawDeploymentMode: true
+  secret:
+    enabled: true
+    hf_token: ""
+  models:
+    deepseek-r1-distill-qwen-1-5b:
+      enabled: false
+      id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+      device: gpu
+      resources:
+        limits:
+          cpu: "2"
+          memory: 16Gi
+        requests:
+          cpu: "1"
+          memory: 8Gi
+      args:
+        - --max-model-len
+        - "8192"
+        - --max-num-seqs
+        - "32"
+        - --gpu-memory-utilization
+        - "0.85"
+        - --enable-auto-tool-choice
+        - --chat-template
+        - /chat-templates/tool_chat_template_qwen.jinja
+        - --tool-call-parser
+        - hermes
+
+api:
+  enabled: true
+  route:
+    enabled: true
+  waitFor:
+    enabled: true
+    timeoutSeconds: 300
+    startupFailureThreshold: 60
+  models:
+    generation: external-model/llama-scout-17b
+    embedding: nomic-ai/nomic-embed-text-v1.5
+    embeddingDimension: "768"
+
+ingestion:
+  enabled: true
+  runOnDeploy:
+    enabled: false
+  models:
+    generation: external-model/llama-scout-17b

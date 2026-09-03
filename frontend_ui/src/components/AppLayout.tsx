@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useHref, useLocation } from 'react-router-dom'
 import {
   Label,
   Masthead,
@@ -74,6 +74,7 @@ function isNavActive(pathname: string, to: string, end?: boolean): boolean {
 
 export function AppLayout() {
   const location = useLocation()
+  const homeHref = useHref('/')
   const health = useHealthPoll()
 
   const masthead = (
@@ -89,7 +90,7 @@ export function AppLayout() {
           </PageToggleButton>
         </MastheadToggle>
         <MastheadBrand>
-          <MastheadLogo href="/" component="a">
+          <MastheadLogo href={homeHref} component="a">
             <Title headingLevel="h1" size="lg">
               General Simulation Admin
             </Title>

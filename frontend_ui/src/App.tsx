@@ -1,4 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+
+const routerBasename =
+  import.meta.env.BASE_URL === '/'
+    ? undefined
+    : import.meta.env.BASE_URL.replace(/\/$/, '')
 import { AppLayout } from './components/AppLayout'
 import { OverviewPage } from './pages/OverviewPage'
 import { EntitiesPage } from './pages/EntitiesPage'
@@ -13,7 +18,7 @@ import { PlatformPage } from './pages/PlatformPage'
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename}>
       <Routes>
         <Route element={<AppLayout />}>
           <Route index element={<OverviewPage />} />

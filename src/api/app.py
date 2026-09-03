@@ -14,8 +14,7 @@ from src.api.admin import router as admin_router
 
 logger = logging.getLogger(__name__)
 
-# Local Vite dev origins (apps/simulation-console). Same-origin in production
-# if the SPA is served from the API or an OpenShift Route.
+# Local Vite dev origins (optional; for future frontend_ui work).
 _CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",

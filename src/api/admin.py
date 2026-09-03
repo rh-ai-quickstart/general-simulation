@@ -1,11 +1,9 @@
-"""Admin interface — browse Postgres entities and Neo4j graph data.
+"""Admin JSON API — browse Postgres entities and Neo4j graph data.
 
-All routes are mounted under /admin.  The HTML SPA is served at GET /admin/
-and makes same-origin API calls to the endpoints below.
+All routes are mounted under /admin.
 
 Endpoint summary
 ----------------
-GET  /admin/                       Serve the admin SPA (HTML)
 GET  /admin/stats                  Overview counts (Postgres + graph)
 GET  /admin/entity-types           Distinct entity types in Postgres
 GET  /admin/entities               Paginated entity list (Postgres)
@@ -34,12 +32,10 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
 from neo4j import AsyncDriver
 from pydantic import BaseModel, Field
 
@@ -68,19 +64,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-_STATIC = Path(__file__).parent / "static"
 _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MiB per file
-
-
-# ── UI ────────────────────────────────────────────────────────────────────────
-
-@router.get("/", include_in_schema=False)
-async def admin_ui() -> FileResponse:
-    """Serve the admin SPA."""
-    return FileResponse(_STATIC / "admin.html")
-
-
-# ── Overview stats ────────────────────────────────────────────────────────────
 
 @router.get("/stats")
 async def get_stats(

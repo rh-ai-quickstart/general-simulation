@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_BASE="https://general-sim-api-general-sim.apps.ocp.sandoval.lab"
-SCENARIO_ID="${1:-shipping-la-closure-001}"
-QUESTION="${2:-Port of Los Angeles is closed due to a strike. What vessels and shipments are affected and what should we do?}"
+API_BASE="${API_BASE:-https://general-sim-api-general-sim.apps.ocp.sandoval.lab}"
+SCENARIO_ID="${1:-opensky-uk-closure-001}"
+QUESTION="${2:-UK airspace is closed due to a NATS GPS failure. Which aircraft are affected, what diversions should be issued, and what is the estimated cost of impact?}"
 
 echo "==> Health check"
 curl -sk "${API_BASE}/health" | python3 -m json.tool

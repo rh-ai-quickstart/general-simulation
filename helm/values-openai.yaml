@@ -1,0 +1,26 @@
+# LLM_MODE=openai — Llama Stack → OpenAI (or any OpenAI-compatible URL).
+# Layer on top of helm/values.yaml:
+#   helm upgrade --install ... -f helm/values.yaml -f helm/values-openai.yaml
+
+llm:
+  mode: openai
+
+global:
+  models:
+    openai:
+      enabled: true
+    external-model:
+      enabled: false
+    deepseek-r1-distill-qwen-1-5b:
+      enabled: false
+
+llm-service:
+  enabled: false
+
+api:
+  models:
+    generation: openai/gpt-4o-mini
+
+ingestion:
+  models:
+    generation: openai/gpt-4o-mini

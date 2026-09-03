@@ -4,11 +4,14 @@
 #
 # Primary deploy (umbrella = one Helm release):
 #   make build
-#   make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
+#   make deploy   # secrets from helm/values-secrets.yaml if present
+#   make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> MAAS_API_TOKEN=<tok>
+#   make deploy LLM_MODE=openai PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
 #   make deploy LLM_MODE=local PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> HF_TOKEN=<tok>
 #
-# LLM_MODE=openai (default) — Llama Stack → OpenAI
-# LLM_MODE=local            — Llama Stack → in-cluster vLLM (OpenShift AI)
+# LLM_MODE=maas (default)  — Llama Stack → LiteMaaS (external-model)
+# LLM_MODE=openai            — Llama Stack → OpenAI
+# LLM_MODE=local             — Llama Stack → in-cluster vLLM (OpenShift AI)
 #
 # Per-component targets: make help
 #
@@ -27,8 +30,9 @@ POSTGRES_IMAGE_NAME ?= general-sim-postgres
 PG_PASSWORD      ?=
 NEO4J_PASSWORD   ?=
 OPENAI_API_KEY   ?=
+MAAS_API_TOKEN   ?=
 HF_TOKEN         ?=
-LLM_MODE         ?= openai
+LLM_MODE         ?= maas
 CHART_REPO_URL   ?= https://rh-ai-quickstart.github.io/general-simulation
 LLM_SERVICE_CHART_REPO ?= https://rh-ai-quickstart.github.io/ai-architecture-charts
 LLM_SERVICE_VERSION    ?= 0.5.9
@@ -45,18 +49,19 @@ CHART_BOOTSTRAP := deploy/helm/bootstrap
 CHART_API       := deploy/helm/api
 CHART_INGESTION := deploy/helm/ingestion
 CHART_UMBRELLA  := deploy/helm/general-simulation
-LLM_SERVICE_VALUES := deploy/helm/llm-service-values.yaml
+HELM_VALUES_DIR := helm
+CHART_VALUES    := $(HELM_VALUES_DIR)/values.yaml
+CHART_VALUES_MODE := $(HELM_VALUES_DIR)/values-$(LLM_MODE).yaml
+CHART_VALUES_SECRETS := $(HELM_VALUES_DIR)/values-secrets.yaml
+LLM_SERVICE_STANDALONE_VALUES := deploy/helm/llm-service-standalone.yaml
 
 # Common flags passed to every helm command
 HELM_RELEASE_NAME ?= general-simulation
 HELM_COMMON := --namespace $(NAMESPACE) --create-namespace
 
-# Stack model ids (providerKey/model.id)
-GEN_MODEL_OPENAI := openai/gpt-4o-mini
-# Must match global.models / llm-service.models key + id from values.yaml
+# Stack model ids (providerKey/model.id) — defaults match values-local.yaml
 LOCAL_MODEL_KEY  ?= deepseek-r1-distill-qwen-1-5b
 LOCAL_MODEL_ID   ?= deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
-GEN_MODEL_LOCAL  := $(LOCAL_MODEL_KEY)/$(LOCAL_MODEL_ID)
 
 # ── Phony declarations ────────────────────────────────────────────────────────
 .PHONY: all help \
@@ -66,7 +71,7 @@ GEN_MODEL_LOCAL  := $(LOCAL_MODEL_KEY)/$(LOCAL_MODEL_ID)
         deploy-api deploy-ingestion neo4j-connect \
         package-chart \
         undeploy status lint-charts \
-        _guard-pg-password _guard-neo4j-password _guard-llm-mode \
+        _guard-deploy-secrets _guard-pg-password _guard-neo4j-password \
         _guard-oc _guard-helm _guard-podman \
         _remove-orphan-neo4j-resources _remove-openshift-routes
 
@@ -77,8 +82,9 @@ all: help
 help:
 	@printf "\nGeneral Simulation Platform — available targets:\n"
 	@printf "  %-40s %s\n" "build" "Build and push all container images"
-	@printf "  %-40s %s\n" "deploy PG_PASSWORD=… NEO4J_PASSWORD=…" "Umbrella install (LLM_MODE=openai|local)"
-	@printf "  %-40s %s\n" "  LLM_MODE=openai OPENAI_API_KEY=…" "  Stack → OpenAI (default)"
+	@printf "  %-40s %s\n" "deploy" "Umbrella install (secrets: env, make vars, or helm/values-secrets.yaml)"
+	@printf "  %-40s %s\n" "  LLM_MODE=maas (default)" "  Stack → LiteMaaS"
+	@printf "  %-40s %s\n" "  LLM_MODE=openai OPENAI_API_KEY=…" "  Stack → OpenAI"
 	@printf "  %-40s %s\n" "  LLM_MODE=local HF_TOKEN=…" "  Stack → in-cluster vLLM (OpenShift AI)"
 	@printf "  %-40s %s\n" "deploy-postgres / deploy-neo4j / …" "Advanced per-component installs"
 	@printf "  %-40s %s\n" "neo4j-connect" "Port-forward Neo4j Browser + Bolt"
@@ -86,39 +92,50 @@ help:
 	@printf "  %-40s %s\n" "undeploy" "Uninstall Helm releases"
 	@printf "  %-40s %s\n" "status" "helm list + oc get pods"
 	@printf "  %-40s %s\n" "lint-charts" "helm lint"
+	@printf "  %-40s %s\n" "smoke-test" "Seed UK demo + POST /query (scripts/smoke-uk-closure.sh)"
 	@printf "\nVariables:\n"
-	@printf "  %-18s %s\n" "LLM_MODE"         "$(LLM_MODE)  (openai | local)"
+	@printf "  %-18s %s\n" "LLM_MODE"         "$(LLM_MODE)  (maas | openai | local)"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
 	@printf "  %-18s %s\n" "APP_IMAGE_NAME"   "$(APP_IMAGE_NAME)"
 	@printf "  %-18s %s\n" "NAMESPACE"        "$(NAMESPACE)"
 	@printf "  %-18s %s\n" "TAG"              "$(TAG)"
-	@printf "  %-18s %s\n" "PG_PASSWORD"      "(required)"
-	@printf "  %-18s %s\n" "NEO4J_PASSWORD"   "(required)"
-	@printf "  %-18s %s\n" "OPENAI_API_KEY"   "(required when LLM_MODE=openai)"
-	@printf "  %-18s %s\n" "HF_TOKEN"         "(required when LLM_MODE=local)"
+	@printf "  %-18s %s\n" "PG_PASSWORD"      "(or global.postgres.password in values-secrets.yaml)"
+	@printf "  %-18s %s\n" "NEO4J_PASSWORD"   "(or global.neo4j.password in values-secrets.yaml)"
+	@printf "  %-18s %s\n" "MAAS_API_TOKEN"   "(maas mode; or values-secrets.yaml)"
+	@printf "  %-18s %s\n" "OPENAI_API_KEY"   "(openai mode; or values-secrets.yaml)"
+	@printf "  %-18s %s\n" "HF_TOKEN"         "(local mode; or values-secrets.yaml)"
 	@printf "  %-18s %s\n" "CHART_REPO_URL"   "$(CHART_REPO_URL)"
 	@printf "\n"
 
 # ── Guards ────────────────────────────────────────────────────────────────────
+# Secret priority: make/env var (also passed via --set) > helm/values-secrets.yaml
 _guard-pg-password:
-	@test -n "$(PG_PASSWORD)" || \
-	  { printf "ERROR: PG_PASSWORD is required.\n"; exit 1; }
+	@effective="$(PG_PASSWORD)"; \
+	if [ -z "$$effective" ] && [ -f "$(CHART_VALUES_SECRETS)" ]; then \
+	  effective="$$(./helm/read-secret.sh "$(CHART_VALUES_SECRETS)" global.postgres.password)"; \
+	fi; \
+	case "$$effective" in ""|CHANGE_ME) \
+	  printf "ERROR: PG_PASSWORD is required (make/env, or global.postgres.password in %s).\n" "$(CHART_VALUES_SECRETS)"; exit 1 ;; \
+	esac
 
 _guard-neo4j-password:
-	@test -n "$(NEO4J_PASSWORD)" || \
-	  { printf "ERROR: NEO4J_PASSWORD is required.\n"; exit 1; }
-
-_guard-llm-mode:
-	@case "$(LLM_MODE)" in \
-	  openai) \
-	    test -n "$(OPENAI_API_KEY)" || \
-	      { printf "ERROR: OPENAI_API_KEY is required for LLM_MODE=openai.\n"; exit 1; } ;; \
-	  local) \
-	    test -n "$(HF_TOKEN)" || \
-	      { printf "ERROR: HF_TOKEN is required for LLM_MODE=local.\n"; exit 1; } ;; \
-	  *) \
-	    printf "ERROR: LLM_MODE must be 'openai' or 'local' (got '$(LLM_MODE)').\n"; exit 1 ;; \
+	@effective="$(NEO4J_PASSWORD)"; \
+	if [ -z "$$effective" ] && [ -f "$(CHART_VALUES_SECRETS)" ]; then \
+	  effective="$$(./helm/read-secret.sh "$(CHART_VALUES_SECRETS)" global.neo4j.password)"; \
+	fi; \
+	case "$$effective" in ""|CHANGE_ME) \
+	  printf "ERROR: NEO4J_PASSWORD is required (make/env, or global.neo4j.password in %s).\n" "$(CHART_VALUES_SECRETS)"; exit 1 ;; \
 	esac
+
+_guard-deploy-secrets:
+	@LLM_MODE="$(LLM_MODE)" \
+	 CHART_VALUES_SECRETS="$(CHART_VALUES_SECRETS)" \
+	 PG_PASSWORD="$(PG_PASSWORD)" \
+	 NEO4J_PASSWORD="$(NEO4J_PASSWORD)" \
+	 MAAS_API_TOKEN="$(MAAS_API_TOKEN)" \
+	 OPENAI_API_KEY="$(OPENAI_API_KEY)" \
+	 HF_TOKEN="$(HF_TOKEN)" \
+	 . ./helm/resolve-deploy-secrets.sh
 
 _guard-oc:
 	@command -v oc >/dev/null 2>&1 || \
@@ -210,7 +227,7 @@ _remove-openshift-routes: _guard-oc
 ## (+ llm-service when LLM_MODE=local).
 deploy: deploy-umbrella
 
-deploy-umbrella: _guard-pg-password _guard-neo4j-password _guard-llm-mode \
+deploy-umbrella: _guard-deploy-secrets \
                  _guard-oc _guard-helm _deploy-namespace _remove-orphan-neo4j-resources
 	@echo "==> Updating umbrella chart dependencies..."
 	helm repo add neo4j https://helm.neo4j.com/neo4j 2>/dev/null || true
@@ -219,68 +236,38 @@ deploy-umbrella: _guard-pg-password _guard-neo4j-password _guard-llm-mode \
 	helm repo update ai-architecture-charts
 	helm dependency update $(CHART_UMBRELLA)
 	@echo "==> Deploying umbrella (LLM_MODE=$(LLM_MODE))..."
-	@if [ "$(LLM_MODE)" = "local" ]; then \
-	  helm upgrade --install $(HELM_RELEASE_NAME) $(CHART_UMBRELLA) \
-	    $(HELM_COMMON) \
-	    --set global.registry=$(REGISTRY) \
-	    --set global.imageTag=$(TAG) \
-	    --set global.images.app=$(APP_IMAGE_NAME) \
-	    --set global.images.postgres=$(POSTGRES_IMAGE_NAME) \
-	    --set-string postgres.postgres.password='$(PG_PASSWORD)' \
-	    --set-string api.postgres.password='$(PG_PASSWORD)' \
-	    --set-string api.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set-string bootstrap.postgres.password='$(PG_PASSWORD)' \
-	    --set-string bootstrap.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set-string ingestion.postgres.password='$(PG_PASSWORD)' \
-	    --set-string ingestion.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set global.models.openai.enabled=false \
-	    --set global.models.$(LOCAL_MODEL_KEY).enabled=true \
-	    --set-string global.models.$(LOCAL_MODEL_KEY).id='$(LOCAL_MODEL_ID)' \
-	    --set llm-service.enabled=true \
-	    --set llm-service.models.$(LOCAL_MODEL_KEY).enabled=true \
-	    --set-string llm-service.models.$(LOCAL_MODEL_KEY).id='$(LOCAL_MODEL_ID)' \
-	    --set-string llm-service.secret.hf_token='$(HF_TOKEN)' \
-	    --set-string api.models.generation='$(GEN_MODEL_LOCAL)' \
-	    --set-string ingestion.models.generation='$(GEN_MODEL_LOCAL)' \
-	    --set-string api.llm.apiKey=unused \
-	    --set-string ingestion.llm.apiKey=unused \
-	    --wait --timeout 25m ; \
-	else \
-	  helm upgrade --install $(HELM_RELEASE_NAME) $(CHART_UMBRELLA) \
-	    $(HELM_COMMON) \
-	    --set global.registry=$(REGISTRY) \
-	    --set global.imageTag=$(TAG) \
-	    --set global.images.app=$(APP_IMAGE_NAME) \
-	    --set global.images.postgres=$(POSTGRES_IMAGE_NAME) \
-	    --set-string postgres.postgres.password='$(PG_PASSWORD)' \
-	    --set-string api.postgres.password='$(PG_PASSWORD)' \
-	    --set-string api.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set-string bootstrap.postgres.password='$(PG_PASSWORD)' \
-	    --set-string bootstrap.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set-string ingestion.postgres.password='$(PG_PASSWORD)' \
-	    --set-string ingestion.neo4j.password='$(NEO4J_PASSWORD)' \
-	    --set global.models.openai.enabled=true \
-	    --set global.models.$(LOCAL_MODEL_KEY).enabled=false \
-	    --set-string global.models.openai.apiToken='$(OPENAI_API_KEY)' \
-	    --set llm-service.enabled=false \
-	    --set-string api.models.generation='$(GEN_MODEL_OPENAI)' \
-	    --set-string ingestion.models.generation='$(GEN_MODEL_OPENAI)' \
-	    --set-string api.llm.apiKey=unused \
-	    --set-string ingestion.llm.apiKey=unused \
-	    --wait --timeout 15m ; \
-	fi
+	@LLM_MODE="$(LLM_MODE)" \
+	 CHART_VALUES_SECRETS="$(CHART_VALUES_SECRETS)" \
+	 PG_PASSWORD="$(PG_PASSWORD)" \
+	 NEO4J_PASSWORD="$(NEO4J_PASSWORD)" \
+	 MAAS_API_TOKEN="$(MAAS_API_TOKEN)" \
+	 OPENAI_API_KEY="$(OPENAI_API_KEY)" \
+	 HF_TOKEN="$(HF_TOKEN)" \
+	 . ./helm/resolve-deploy-secrets.sh; \
+	helm_args="-f $(CHART_VALUES)"; \
+	if [ "$(LLM_MODE)" != "maas" ]; then \
+	  helm_args="$$helm_args -f $(CHART_VALUES_MODE)"; \
+	fi; \
+	if [ -f "$(CHART_VALUES_SECRETS)" ]; then \
+	  helm_args="$$helm_args -f $(CHART_VALUES_SECRETS)"; \
+	fi; \
+	helm upgrade --install $(HELM_RELEASE_NAME) $(CHART_UMBRELLA) \
+	  $(HELM_COMMON) \
+	  $$helm_args \
+	  --set global.registry=$(REGISTRY) \
+	  --set global.imageTag=$(TAG) \
+	  --set global.images.app=$(APP_IMAGE_NAME) \
+	  --set global.images.postgres=$(POSTGRES_IMAGE_NAME) \
+	  $$SECRET_HELM_ARGS \
+	  --wait --timeout $(if $(filter local,$(LLM_MODE)),25m,15m)
 	@printf "\n==> Deployment complete (LLM_MODE=$(LLM_MODE)).\n"
 	@printf "    API (same-NS):  http://general-sim-api:8000\n"
-	@printf "    Admin (same-NS): http://general-sim-api:8000/admin/\n"
 	@printf "    Llama Stack:    http://llamastack:8321/v1\n"
 	@printf "    Smoke test:\n"
 	@printf "      ROUTE=\$$(oc get route general-sim-api -n $(NAMESPACE)"
 	@printf " -o jsonpath='{.spec.host}')\n"
 	@printf "      curl -s https://\$$ROUTE/health | jq .\n"
-	@printf "    Admin console:\n"
-	@printf "      ADMIN=\$$(oc get route general-sim-admin -n $(NAMESPACE)"
-	@printf " -o jsonpath='{.spec.host}')\n"
-	@printf "      open https://\$$ADMIN/admin/\n"
+	@printf "      SEED_MODE=cluster make smoke-test NAMESPACE=$(NAMESPACE)\n"
 	@printf "    Neo4j Browser: make neo4j-connect NAMESPACE=$(NAMESPACE)\n\n"
 
 # ── Advanced: per-component targets ───────────────────────────────────────────
@@ -290,7 +277,7 @@ deploy-postgres: _guard-pg-password _guard-oc _guard-helm _deploy-namespace
 	helm upgrade --install postgres $(CHART_POSTGRES) \
 	  $(HELM_COMMON) \
 	  --set image=$(IMG_POSTGRES) \
-	  --set postgres.password=$(PG_PASSWORD) \
+	  --set-string global.postgres.password='$(PG_PASSWORD)' \
 	  --wait --timeout 5m
 	@echo "    Postgres ready."
 
@@ -332,8 +319,8 @@ deploy-bootstrap: _guard-pg-password _guard-neo4j-password _guard-helm
 	helm upgrade --install bootstrap $(CHART_BOOTSTRAP) \
 	  $(HELM_COMMON) \
 	  --set image=$(IMG_APP) \
-	  --set-string postgres.password='$(PG_PASSWORD)' \
-	  --set-string neo4j.password='$(NEO4J_PASSWORD)' \
+	  --set-string global.postgres.password='$(PG_PASSWORD)' \
+	  --set-string global.neo4j.password='$(NEO4J_PASSWORD)' \
 	  --atomic --timeout 3m
 	@echo "    Bootstrap complete."
 
@@ -346,7 +333,7 @@ deploy-llm-service: _guard-helm _guard-oc _deploy-namespace
 	helm upgrade --install llm-service ai-architecture-charts/llm-service \
 	  --version $(LLM_SERVICE_VERSION) \
 	  $(HELM_COMMON) \
-	  -f $(LLM_SERVICE_VALUES) \
+	  -f $(LLM_SERVICE_STANDALONE_VALUES) \
 	  --set-string secret.hf_token='$(HF_TOKEN)' \
 	  --wait --timeout 20m
 	@printf "    In-cluster vLLM via llm-service (umbrella LLM_MODE=local wires Stack).\n\n"
@@ -355,21 +342,19 @@ deploy-api: _guard-pg-password _guard-neo4j-password _guard-helm
 	helm upgrade --install api $(CHART_API) \
 	  $(HELM_COMMON) \
 	  --set image=$(IMG_APP) \
-	  --set-string postgres.password='$(PG_PASSWORD)' \
-	  --set-string neo4j.password='$(NEO4J_PASSWORD)' \
+	  --set-string global.postgres.password='$(PG_PASSWORD)' \
+	  --set-string global.neo4j.password='$(NEO4J_PASSWORD)' \
 	  --set-string llm.apiKey='$(OPENAI_API_KEY)' \
 	  --wait --timeout 3m
 	@oc get route general-sim-api -n $(NAMESPACE) \
 	  -o jsonpath='    API:    https://{.spec.host}/health{"\n"}' 2>/dev/null || true
-	@oc get route general-sim-admin -n $(NAMESPACE) \
-	  -o jsonpath='    Admin:  https://{.spec.host}/admin/{"\n"}' 2>/dev/null || true
 
 deploy-ingestion: _guard-pg-password _guard-neo4j-password _guard-helm
 	helm upgrade --install ingestion $(CHART_INGESTION) \
 	  $(HELM_COMMON) \
 	  --set image=$(IMG_APP) \
-	  --set-string postgres.password='$(PG_PASSWORD)' \
-	  --set-string neo4j.password='$(NEO4J_PASSWORD)' \
+	  --set-string global.postgres.password='$(PG_PASSWORD)' \
+	  --set-string global.neo4j.password='$(NEO4J_PASSWORD)' \
 	  --set-string llm.apiKey='$(OPENAI_API_KEY)' \
 	  --wait --timeout 2m
 	@echo "    Ingestion CronJob configured."
@@ -429,3 +414,7 @@ lint-charts: _guard-helm
 	helm dependency update $(CHART_UMBRELLA)
 	helm lint $(CHART_UMBRELLA)
 	@echo "==> All charts passed lint."
+
+smoke-test:
+	@chmod +x scripts/smoke-uk-closure.sh
+	./scripts/smoke-uk-closure.sh

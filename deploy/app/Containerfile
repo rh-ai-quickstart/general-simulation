@@ -16,10 +16,10 @@
 #   - No secrets baked in; all config comes from env / mounted secrets.
 #
 # Cross-compilation note (Apple Silicon → linux/amd64):
-#   uv is a Rust binary that segfaults under QEMU x86_64 emulation. Stage 0
-#   runs on the native BUILD platform (arm64) so uv executes without QEMU,
-#   then exports a pinned requirements.txt that pip (QEMU-safe) consumes in
-#   the target-platform stages.
+#   uv and Node/npm segfault under QEMU x86_64 emulation. Stages that run
+#   those tools use $BUILDPLATFORM (native arm64 on Apple Silicon) so they
+#   execute without QEMU; their outputs (requirements.txt, dist/) are
+#   platform-independent and copy into the target-platform runtime image.
 
 # ── Stage 0: export pinned requirements on the native build platform ──────────
 # $BUILDPLATFORM resolves to the host arch (arm64 on Apple Silicon), so uv
@@ -75,6 +75,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv        /app/.venv
 COPY --from=builder /app/src          /app/src
 COPY --from=builder /app/domain       /app/domain
+COPY scripts/                         /app/scripts
 COPY pyproject.toml                   /app/pyproject.toml
 
 # Activate the venv for all subsequent RUN / CMD / ENTRYPOINT invocations.

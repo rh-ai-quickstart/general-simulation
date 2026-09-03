@@ -10,11 +10,12 @@ Scenarios match ai-supply-chain-agent frontend presets:
   - supply-chain-suez-blockage      (Suez Blockage)
 
 Run from the repo root:
+    uv run seed-demo
+    # or:
     uv run python scripts/seed_demo.py
 
-    Or via oc exec:
-    oc exec -n general-sim deployment/general-sim-api -- \
-        python /app/scripts/seed_demo.py
+    In-cluster (after deploy):
+    oc exec -n general-simulation deployment/general-sim-api -- seed-demo
 """
 from __future__ import annotations
 

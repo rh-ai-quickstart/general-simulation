@@ -6,8 +6,9 @@ description: >
   the FastAPI API, and the ingestion CronJob. Optional in-cluster vLLM via
   llm-service (OpenShift AI / KServe) for llm.mode=local.
 
-  Inference always goes through Llama Stack. Two modes only:
-    openai — Stack → OpenAI-compatible API
+  Inference always goes through Llama Stack. Three modes:
+    maas   — Stack → LiteMaaS / external OpenAI-compatible API (default)
+    openai — Stack → OpenAI
     local  — Stack → in-cluster llm-service (vLLM)
 
   Install standalone into any namespace, or consume as a Helm subchart from a

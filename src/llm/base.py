@@ -19,11 +19,16 @@ class LLMClientBase(Protocol):
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> GenerateResult:
         """Chat completion (with optional tool schemas).
 
         ``tools`` uses the OpenAI function-calling JSON schema shape:
         ``[{"type": "function", "function": {"name": ..., "parameters": ...}}]``.
+
+        ``tool_choice`` is forwarded to the inference API when ``tools`` is set.
+        Llama Stack / remote MaaS models may return plain-text pseudo tool calls
+        unless this is explicit (``"auto"`` or ``"required"``).
         """
         ...
 

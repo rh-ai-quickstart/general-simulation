@@ -8,16 +8,32 @@ global.images.postgres (or imageName), and global.imageTag.
 {{- if .Values.image -}}
 {{- .Values.image -}}
 {{- else -}}
-{{- $registry := .Values.global.registry | default "quay.io/rh-ai-quickstart" -}}
-{{- $tag := .Values.global.imageTag | default "latest" -}}
-{{- $name := .Values.imageName | default (.Values.global.images.postgres | default "general-sim-postgres") -}}
+{{- $global := .Values.global | default dict -}}
+{{- $registry := $global.registry | default "quay.io/rh-ai-quickstart" -}}
+{{- $tag := $global.imageTag | default "latest" -}}
+{{- $images := $global.images | default dict -}}
+{{- $name := .Values.imageName | default ($images.postgres | default "general-sim-postgres") -}}
 {{- printf "%s/%s:%s" $registry $name $tag -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-Common labels
+Postgres credentials (falls back to global.postgres).
 */}}
+{{- define "postgres.username" -}}
+{{- $globalPg := (.Values.global | default dict).postgres | default dict -}}
+{{- coalesce .Values.postgres.username $globalPg.user $globalPg.username "sim" -}}
+{{- end }}
+
+{{- define "postgres.password" -}}
+{{- $globalPg := (.Values.global | default dict).postgres | default dict -}}
+{{- required "postgres.password or global.postgres.password is required — pass via --set postgres.password=<pw> or global.postgres.password" (coalesce .Values.postgres.password $globalPg.password "") -}}
+{{- end }}
+
+{{- define "postgres.database" -}}
+{{- $globalPg := (.Values.global | default dict).postgres | default dict -}}
+{{- coalesce .Values.postgres.database $globalPg.database "sim" -}}
+{{- end }}
 {{- define "postgres.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | trunc 63 | trimSuffix "-" }}
 app.kubernetes.io/name: postgres

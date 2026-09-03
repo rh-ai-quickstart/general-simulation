@@ -1,11 +1,11 @@
 {{/*
-Init container that blocks bootstrap until Postgres and Neo4j accept TCP.
+Init container that blocks ingestion until Postgres and Neo4j accept TCP.
 */}}
-{{- define "bootstrap.waitForDepsInit" -}}
+{{- define "ingestion.waitForDepsInit" -}}
 {{- if .Values.waitFor.enabled }}
 initContainers:
   - name: wait-for-deps
-    image: {{ include "bootstrap.containerImage" . }}
+    image: {{ include "ingestion.containerImage" . }}
     imagePullPolicy: Always
     command:
       - python
@@ -13,8 +13,8 @@ initContainers:
       - |
         import socket, sys, time
         targets = [
-            ({{ include "bootstrap.postgresHost" . | quote }}, {{ include "bootstrap.postgresPort" . }}),
-            ({{ include "bootstrap.neo4jHost" . | quote }}, {{ include "bootstrap.neo4jPort" . }}),
+            ({{ include "ingestion.postgresHost" . | quote }}, {{ include "ingestion.postgresPort" . }}),
+            ({{ include "ingestion.neo4jHost" . | quote }}, {{ include "ingestion.neo4jPort" . }}),
         ]
         timeout = {{ .Values.waitFor.timeoutSeconds }}
         deadline = time.time() + timeout
