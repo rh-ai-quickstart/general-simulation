@@ -10,51 +10,85 @@ live under [`deploy/helm/general-simulation/`](deploy/helm/general-simulation/).
 
 ## Mental model
 
+Three small pictures are easier than one busy chart.
+
+### 1. What you edit → what Helm installs
+
+```mermaid
+flowchart LR
+  subgraph edit [You edit — repo helm/]
+    V[values.yaml]
+    O[values-openai / values-local]
+    S[values-secrets.yaml]
+    M[make --set]
+  end
+
+  U[Umbrella chart<br/>deploy/helm/general-simulation]
+  edit --> U
+```
+
+Day-to-day config lives under **`helm/`**. The umbrella chart wires dependencies
+and a few shared secrets (Neo4j auth, Llama Stack pgvector, OpenShift SCC).
+
+### 2. Umbrella → components
+
+Top-level keys in your values file map **one-to-one** to subchart names
+(`api`, `postgres`, `ingestion`, …). The umbrella also renders a handful of
+its own templates (Neo4j auth secret, etc.).
+
 ```mermaid
 flowchart TB
-  subgraph consumer [Consumer layer — repo helm/]
-    V1[values.yaml]
-    V2[values-openai.yaml / values-local.yaml]
-    VS[values-secrets.yaml]
-    SET[make --set overrides]
+  U[general-simulation]
+
+  U --> PG[postgres]
+  U --> NJ[neo4j]
+  U --> BS[bootstrap Job]
+  U --> LS[llama-stack]
+  U --> API[api]
+  U --> ING[ingestion]
+  U -. local LLM only .-> VLLM[llm-service]
+
+  BS -->|schema hook| PG
+  BS -->|schema hook| NJ
+  API --> LS
+  ING --> LS
+```
+
+`llm-service` is enabled only for `LLM_MODE=local`; MaaS and OpenAI modes talk
+to upstream APIs through Llama Stack instead.
+
+### 3. Two ways settings reach a subchart
+
+This is the part the old diagram tried to show with duplicate arrows.
+
+```mermaid
+flowchart TB
+  subgraph scoped [Scoped keys — one subchart]
+    APIK["api.*  →  api chart"]
+    INGK["ingestion.*  →  ingestion chart"]
+    PGK["postgres.*  →  postgres chart"]
   end
 
-  subgraph umbrella [Umbrella — deploy/helm/general-simulation]
-    UV[chart values.yaml defaults]
-    UT[umbrella templates<br/>neo4j-auth, pgvector, SCC]
+  subgraph shared [Shared keys — every subchart]
+    G["global.*<br/>registry, passwords, models"]
   end
 
-  subgraph subcharts [Subcharts]
-    PG[postgres]
-    N4J[neo4j]
-    BS[bootstrap]
-    LS[llama-stack]
-    LLM[llm-service]
-    API[api]
-    ING[ingestion]
-  end
+  G --> PG[postgres]
+  G --> API[api]
+  G --> ING[ingestion]
+  G --> BS[bootstrap]
+  G --> LS[llama-stack]
+```
 
-  V1 --> umbrella
-  V2 --> umbrella
-  VS --> umbrella
-  SET --> umbrella
-  UV --> umbrella
+**Scoped** — e.g. `api.route.enabled` only affects the API Deployment/Route.  
+**Global** — e.g. `global.postgres.password` is copied into each subchart’s
+`.Values.global`; helpers use `coalesce(local, global)` so you usually set
+passwords once under `global`.
 
-  umbrella -->|postgres.*| PG
-  umbrella -->|neo4j.*| N4J
-  umbrella -->|bootstrap.*| BS
-  umbrella -->|llama-stack.*| LS
-  umbrella -->|llm-service.*| LLM
-  umbrella -->|api.*| API
-  umbrella -->|ingestion.*| ING
+### Merge priority (later wins)
 
-  consumer -->|global.*| PG
-  consumer -->|global.*| N4J
-  consumer -->|global.*| BS
-  consumer -->|global.*| LS
-  consumer -->|global.*| LLM
-  consumer -->|global.*| API
-  consumer -->|global.*| ING
+```text
+subchart defaults  →  umbrella defaults  →  -f values.yaml  →  -f overlay  →  -f secrets  →  --set
 ```
 
 Helm merges values **depth-first**: subchart defaults → umbrella defaults →
