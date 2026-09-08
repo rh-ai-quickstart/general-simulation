@@ -13,7 +13,7 @@
 # AGE requires shared_preload_libraries = 'age' at server start.
 # This is NOT set in postgresql.conf here — pass it at runtime via:
 #   postgres -c shared_preload_libraries=age
-# (the compose.yaml does this; OpenShift manifests must do the same).
+# (deploy/local/composefile.yml does this; OpenShift manifests must do the same).
 
 FROM postgres:16.3-bookworm
 

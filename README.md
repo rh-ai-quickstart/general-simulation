@@ -311,7 +311,9 @@ lib/
     types.py                 # Message / ToolCall / GenerateResult / Chunk
 apps/
   api/                       # FastAPI entrypoint + JSON admin API (/admin/*)
-deploy/                      # Containerfiles, Helm chart, OpenShift helpers
+deploy/                      # Containerfiles, Helm chart, local dev compose
+  local/
+    composefile.yml          # Postgres + Neo4j for local development
   container_files/
     api/                     # FastAPI app Containerfile
     postgres/                # Custom Postgres image (pgvector + PostGIS)
@@ -338,7 +340,7 @@ uv sync --all-extras
 ### 2. Start local services (Postgres + Neo4j)
 
 ```bash
-docker compose up -d
+podman compose -f deploy/local/composefile.yml up -d
 ```
 
 This starts Postgres (pgvector + PostGIS) on port 5432 and Neo4j on ports 7474
@@ -356,7 +358,7 @@ cp .env.example .env
 # Edit .env: set POSTGRES_DSN, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
 # LLM_* settings, and optionally ENABLED_DOMAINS (default: aviation,shipping).
 #
-# With compose defaults (see compose.yaml — Postgres is published on 5433):
+# With compose defaults (see deploy/local/composefile.yml — Postgres is published on 5433):
 #   POSTGRES_DSN=postgresql://sim:sim@localhost:5433/sim
 #   NEO4J_URI=bolt://localhost:7687
 #   NEO4J_USER=neo4j
