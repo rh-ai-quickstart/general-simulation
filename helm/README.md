@@ -1,13 +1,27 @@
 # general-simulation Helm chart
 
-Single chart for the General Simulation platform. Postgres, bootstrap, API, and
-ingestion are inline templates; external dependencies are neo4j, llama-stack,
-and llm-service.
+Single chart for the General Simulation platform. Postgres, neo4j (OpenShift
+wiring), bootstrap, API, and ingestion are inline templates under
+`templates/`; the Neo4j database itself, Llama Stack, and llm-service are
+external subchart dependencies.
 
 | File | Purpose |
 |------|---------|
 | [`values.yaml`](values.yaml) | **Default config** — component toggles, models, images |
 | [`values-secrets.yaml.example`](values-secrets.yaml.example) | Template for passwords/tokens (copy to `values-secrets.yaml`) |
+
+## Template layout
+
+```
+templates/
+  api/                 # Deployment, Service, Route, ConfigMap, Secret
+  bootstrap/           # Schema bootstrap Job
+  ingestion/           # CronJob + optional hook Job
+  neo4j/               # Secret neo4j-auth, ServiceAccount, SCC binding
+  postgres/            # StatefulSet, Services, init ConfigMap, SCC binding
+  llamastack-*.yaml    # Llama Stack run-config + pgvector Secret bridge
+  _helpers.tpl         # Shared DSN, image, and wait-for helpers
+```
 
 ## Quick start
 
@@ -44,6 +58,6 @@ llm-service:
 
 Shipped defaults in `values.yaml` set `ingestion.enabled: false` until you
 enable the CronJob. Domain keys (`api.enabledDomains`, `ingestion.adapterId`, etc.)
-default via `templates/_helpers.tpl`; see `values-full.yaml` for overrides.
+default via `templates/_helpers.tpl`.
 
 **Values flow:** see [`VALUES_MAPPING.md`](../VALUES_MAPPING.md).

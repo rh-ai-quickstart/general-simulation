@@ -3,6 +3,5 @@ values-secrets.yaml
 values-secrets.yaml.example
 resolve-deploy-secrets.sh
 read-secret.sh
-llm-service-standalone.yaml
 neo4j/
 README.md

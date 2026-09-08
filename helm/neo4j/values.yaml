@@ -2,8 +2,8 @@
 # Modeled on the working "neo4j" project in this cluster.
 #
 # deploy-neo4j in the Makefile adds --set overrides for:
-# passwordFromSecret references Secret neo4j-auth (created by the umbrella chart
-# from bootstrap.neo4j.password / api.neo4j.password).
+# passwordFromSecret references Secret neo4j-auth (created by templates/neo4j/secret.yaml
+# in the umbrella chart from global.neo4j.password).
 #   config.server.default_advertised_address  (auto-detected route hostname)
 
 # Keep Service/StatefulSet named "neo4j" (API/bootstrap expect host "neo4j").
@@ -22,7 +22,7 @@ neo4j:
   acceptLicenseAgreement: "yes"
   edition: community
   name: neo4j
-  # passwordFromSecret references Secret neo4j-auth (umbrella chart template).
+  # passwordFromSecret references Secret neo4j-auth (templates/neo4j/secret.yaml).
   passwordFromSecret: neo4j-auth
 
   resources:
@@ -30,7 +30,7 @@ neo4j:
     memory: 4Gi
 
 # OpenShift: use neo4j-sa (anyuid SCC) so UID/GID 7474 is allowed.
-# SA + ClusterRoleBinding are created by the umbrella chart when
+# SA + ClusterRoleBinding are created by templates/neo4j/ when
 # openshift.neo4j.scc.enabled is true.
 podSpec:
   serviceAccountName: neo4j-sa

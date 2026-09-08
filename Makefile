@@ -10,7 +10,7 @@
 # Enable LLM providers via global.models.<key>.enabled in helm/values.yaml.
 # Set llm-service.enabled: true for in-cluster vLLM (requires HF_TOKEN).
 #
-# Per-component: deploy-neo4j, deploy-llm-service (standalone debug only)
+# Per-component: deploy-neo4j (standalone debug only)
 #
 # Image registry/tag: edit helm/values.yaml (global.registry, global.imageTag, …).
 # make build* reads those defaults; make deploy uses values.yaml unless you pass
@@ -36,7 +36,6 @@ MAAS_API_TOKEN   ?=
 HF_TOKEN         ?=
 CHART_REPO_URL   ?= https://rh-ai-quickstart.github.io/general-simulation
 LLM_SERVICE_CHART_REPO ?= https://rh-ai-quickstart.github.io/ai-architecture-charts
-LLM_SERVICE_VERSION    ?= 0.5.9
 LLAMA_STACK_VERSION    ?= 0.8.5
 
 # ── Derived image references ──────────────────────────────────────────────────
@@ -48,7 +47,6 @@ CHART_UMBRELLA  := helm
 CHART_NEO4J     := helm/neo4j
 CHART_VALUES    := helm/values.yaml
 CHART_VALUES_SECRETS := helm/values-secrets.yaml
-LLM_SERVICE_STANDALONE_VALUES := helm/llm-service-standalone.yaml
 
 # Common flags passed to every helm command
 HELM_RELEASE_NAME ?= general-simulation
@@ -77,7 +75,7 @@ LOCAL_MODEL_ID   ?= deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 .PHONY: all help \
         build build-postgres build-app \
         deploy deploy-umbrella \
-        deploy-neo4j deploy-llm-service neo4j-connect \
+        deploy-neo4j neo4j-connect \
         package-chart \
         undeploy status lint-charts \
         _guard-deploy-secrets _guard-pg-password _guard-neo4j-password \
@@ -93,7 +91,7 @@ help:
 	@printf "  %-40s %s\n" "build" "Build and push all container images"
 	@printf "  %-40s %s\n" "deploy" "Umbrella install (secrets: env, make vars, or helm/values-secrets.yaml)"
 	@printf "  %-40s %s\n" "  Edit helm/values.yaml" "  Enable models via global.models.<key>.enabled"
-	@printf "  %-40s %s\n" "deploy-neo4j / deploy-llm-service" "Standalone debug installs only"
+	@printf "  %-40s %s\n" "deploy-neo4j" "Standalone Neo4j debug install only"
 	@printf "  %-40s %s\n" "neo4j-connect" "Port-forward Neo4j Browser + Bolt"
 	@printf "  %-40s %s\n" "package-chart" "Package umbrella chart into dist/"
 	@printf "  %-40s %s\n" "undeploy" "Uninstall Helm releases"
@@ -182,7 +180,8 @@ _deploy-namespace: _guard-oc
 	oc apply -f deploy/openshift/namespace.yaml
 
 # Pre-Helm deploy (make deploy / oc create) left neo4j-auth, neo4j-sa, and SCC
-# bindings without Helm ownership metadata — delete those so umbrella install can manage them.
+# bindings without Helm ownership metadata — delete those so umbrella install can
+# manage them (templates/neo4j/).
 _remove-orphan-neo4j-resources: _guard-oc
 	@echo "==> Checking for pre-Helm Neo4j OpenShift resources..."
 	@rel="$(HELM_RELEASE_NAME)"; \
@@ -308,20 +307,6 @@ neo4j-connect: _guard-oc
 	@printf "    Connect with: bolt://localhost:7687\n"
 	@printf "    Username: neo4j\n\n"
 	oc port-forward svc/neo4j 7474:7474 7687:7687 -n $(NAMESPACE)
-
-deploy-llm-service: _guard-helm _guard-oc _deploy-namespace
-	@test -n "$(HF_TOKEN)" || \
-	  { printf "ERROR: HF_TOKEN is required.\n"; exit 1; }
-	@echo "==> Deploying llm-service only (set llm-service.enabled: true in helm/values.yaml for umbrella)..."
-	helm repo add ai-architecture-charts $(LLM_SERVICE_CHART_REPO) 2>/dev/null || true
-	helm repo update ai-architecture-charts
-	helm upgrade --install llm-service ai-architecture-charts/llm-service \
-	  --version $(LLM_SERVICE_VERSION) \
-	  $(HELM_COMMON) \
-	  -f $(LLM_SERVICE_STANDALONE_VALUES) \
-	  --set-string secret.hf_token='$(HF_TOKEN)' \
-	  --wait --timeout 20m
-	@printf "    In-cluster vLLM via llm-service (enable llm-service in helm/values.yaml for umbrella).\n\n"
 
 # ── Package / undeploy / status / lint ────────────────────────────────────────
 

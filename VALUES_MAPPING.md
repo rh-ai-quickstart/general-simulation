@@ -31,21 +31,24 @@ All chart templates and default values live under **`helm/`**. Edit
 
 ### 2. Chart → components
 
-Postgres, bootstrap, API, and ingestion are **inline templates** under
-`helm/templates/`. External subchart dependencies: neo4j, llama-stack,
-llm-service.
+Postgres, neo4j (OpenShift wiring), bootstrap, API, and ingestion are **inline
+templates** under `helm/templates/`. External subchart dependencies: the Neo4j
+database (`neo4j/neo4j` chart), llama-stack, and llm-service.
 
 ```mermaid
 flowchart TB
   U[general-simulation]
 
   U --> PG[postgres inline]
-  U --> NJ[neo4j dep]
+  U --> NJW[neo4j inline wiring]
+  U --> NJ[neo4j subchart]
   U --> BS[bootstrap inline]
   U --> LS[llama-stack dep]
   U --> API[api inline]
   U --> ING[ingestion inline]
   U -. optional .-> VLLM[llm-service dep]
+
+  NJW -. Secret SA SCC .-> NJ
 ```
 
 Enable providers via `global.models.<key>.enabled`. Set `llm-service.enabled`
@@ -70,7 +73,6 @@ subchart defaults  →  helm/values.yaml  →  -f values-secrets.yaml  →  --se
 | File | Role | Committed? |
 |------|------|------------|
 | [`helm/values.yaml`](helm/values.yaml) | **Default config** (bundled in published `.tgz`) | Yes |
-| [`helm/values-full.yaml`](helm/values-full.yaml) | Complete reference (domains, ingestion, all subchart keys) | Yes |
 | [`helm/values-secrets.yaml`](helm/values-secrets.yaml) | Passwords and API tokens | **No** (gitignored) |
 | [`helm/values-secrets.yaml.example`](helm/values-secrets.yaml.example) | Template for secrets file | Yes |
 
@@ -120,11 +122,12 @@ for subchart values.
 
 | Parent key | Renders | `enabled` guard |
 |------------|---------|-----------------|
-| `postgres` | Inline StatefulSet, Services, SCC | `postgres.enabled` |
+| `postgres` | Inline StatefulSet, Services, SCC (`templates/postgres/`) | `postgres.enabled` |
+| `openshift.neo4j` | Inline Secret, SA, SCC (`templates/neo4j/`) | `neo4j.enabled` + `openshift.neo4j.scc.enabled` (SA/SCC) |
 | `bootstrap` | Inline schema Job (hook) | `bootstrap.enabled` |
 | `api` | Inline Deployment, Service, Route | `api.enabled` |
 | `ingestion` | Inline CronJob + hook Job | `ingestion.enabled` |
-| `neo4j` | External subchart | `neo4j.enabled` |
+| `neo4j` | External Neo4j StatefulSet subchart | `neo4j.enabled` |
 | `llama-stack` | External subchart | `llama-stack.enabled` |
 | `llm-service` | External subchart | `llm-service.enabled` |
 
@@ -134,7 +137,7 @@ for subchart values.
 
 Enable providers in `global.models.<key>.enabled`. Point
 `api.models.generation` at `<providerKey>/<model.id>`. Most api/bootstrap/postgres
-settings default in `templates/_helpers.tpl` (see `values-full.yaml`).
+settings default in `templates/_helpers.tpl`.
 
 ### Inference path (always via Llama Stack)
 
@@ -163,11 +166,11 @@ defaults to in-cluster `http://<key>-vllm.<namespace>.svc.cluster.local/v1`.
 
 | Template | Reads | Creates |
 |----------|-------|---------|
-| [`neo4j-auth-secret.yaml`](helm/templates/neo4j-auth-secret.yaml) | `global.neo4j.password` | Secret `neo4j-auth` |
+| [`neo4j/secret.yaml`](helm/templates/neo4j/secret.yaml) | `global.neo4j.password` | Secret `neo4j-auth` |
+| [`neo4j/serviceaccount.yaml`](helm/templates/neo4j/serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA `neo4j-sa` |
+| [`neo4j/scc-binding.yaml`](helm/templates/neo4j/scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC ClusterRoleBinding |
 | [`llamastack-pg-secret.yaml`](helm/templates/llamastack-pg-secret.yaml) | `global.postgres.*` | Secret `pgvector` |
 | [`llamastack-run-config.yaml`](helm/templates/llamastack-run-config.yaml) | `api.models.embedding`, `global.models.*` | ConfigMap `general-sim-llamastack-config` (mounted by llama-stack) |
-| [`neo4j-serviceaccount.yaml`](helm/templates/neo4j-serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA |
-| [`neo4j-scc-binding.yaml`](helm/templates/neo4j-scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC binding |
 
 ---
 

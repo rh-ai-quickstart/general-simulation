@@ -218,7 +218,7 @@ ENABLED_DOMAINS=shipping
 Helm:
 
 ```yaml
-# helm/values.yaml (see helm/values-full.yaml for the full reference)
+# helm/values.yaml
 api:
   enabledDomains: aviation,shipping
 ingestion:

@@ -1,7 +1,7 @@
 # Default values for general-simulation.
 #
 # Secrets: helm/values-secrets.yaml or --set (never commit passwords/tokens).
-# Full reference: helm/values-full.yaml — template defaults in templates/_helpers.tpl.
+# Full reference: template defaults in templates/_helpers.tpl.
 
 openshift:
   neo4j:

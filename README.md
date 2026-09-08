@@ -311,6 +311,12 @@ src/
     types.py                 # Message / ToolCall / GenerateResult / Chunk
   api/                       # FastAPI entrypoint + JSON admin API (/admin/*)
 helm/                        # Umbrella Helm chart (authoritative deploy path)
+  templates/
+    api/                     # API Deployment, Service, Route
+    bootstrap/               # Schema bootstrap Job
+    ingestion/               # CronJob + hook Job
+    neo4j/                   # neo4j-auth Secret, SA, SCC binding
+    postgres/                # Postgres StatefulSet + Services
 deploy/                      # Containerfiles, archived manifests, OpenShift helpers
 tests/
 ```
@@ -496,11 +502,12 @@ make deploy \
 
 Default toggles in [`helm/values.yaml`](helm/values.yaml): `ingestion.enabled: false`
 (CronJob off until you turn it on), `llm-service.enabled: true` (requires GPU +
-OpenShift AI unless you disable it). See [`helm/values-full.yaml`](helm/values-full.yaml)
-for the complete reference.
+OpenShift AI unless you disable it).
 
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
-`neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack to enabled `global.models` providers.
+`templates/neo4j/` resources (`neo4j-sa`, anyuid SCC, Secret `neo4j-auth` when
+`openshift.neo4j.scc.enabled`), and wires Llama Stack to enabled `global.models`
+providers.
 
 ---
 
@@ -508,8 +515,8 @@ for the complete reference.
 
 | Chart | Path | Key resources |
 |---|---|---|
-| `general-simulation` | `helm/` | Single chart: postgres, bootstrap, api, ingestion inline |
-| `neo4j` | external dep | Official Neo4j chart |
+| `general-simulation` | `helm/` | Inline templates: `postgres/`, `neo4j/`, `bootstrap/`, `api/`, `ingestion/` |
+| `neo4j` | external dep | Official Neo4j StatefulSet (reads Secret `neo4j-auth`) |
 | `llama-stack` | external dep | Inference gateway (`llamastack:8321`) |
 | `llm-service` | external dep | In-cluster vLLM; enable via `llm-service.enabled` |
 
@@ -556,7 +563,7 @@ Component toggles live in [`helm/values.yaml`](helm/values.yaml) under `postgres
 make deploy-neo4j NEO4J_PASSWORD=<your-password>
 ```
 
-This installs the official `neo4j/neo4j` Helm chart (advanced per-component target). The **umbrella** chart (`make deploy`) creates `neo4j-sa`, anyuid SCC, and `neo4j-auth` automatically when `openshift.neo4j.scc.enabled` is true.
+This installs the official `neo4j/neo4j` Helm chart (advanced per-component target). The **umbrella** chart (`make deploy`) renders `helm/templates/neo4j/` (`neo4j-sa`, anyuid SCC, `neo4j-auth`) automatically when `openshift.neo4j.scc.enabled` is true.
 
 The standalone `deploy-neo4j` target still:
 - Creates a `neo4j-sa` ServiceAccount and grants it the `anyuid` SCC
@@ -581,20 +588,12 @@ make neo4j-connect
 
 Set `llm-service.enabled: true` in [`helm/values.yaml`](helm/values.yaml) and enable
 the in-cluster model under `global.models`. Llama Stack points at the
-InferenceService (`<model-key>-vllm`).
-
-Standalone / debug:
-
-```bash
-make deploy-llm-service HF_TOKEN=<your-hf-token>
-```
+InferenceService (`<model-key>-vllm`). Pass `HF_TOKEN` when deploying the umbrella
+chart (`make deploy ... HF_TOKEN=<token>`).
 
 Requires Red Hat OpenShift AI (KServe). First start downloads model weights and
 can take several minutes. Do **not** point the API at vLLM directly — Stack is
 the only client of that Service.
-
-Legacy pre-Helm manifests are under `deploy/archived/openshift/` and
-`deploy/archived/vllm-helm/` for reference only.
 
 ---
 
@@ -631,7 +630,7 @@ make neo4j-connect
 make status
 make lint-charts
 make undeploy
-# Advanced standalone: deploy-neo4j, deploy-llm-service
+# Advanced standalone: deploy-neo4j
 ```
 
 | Variable | Default | Description |
