@@ -19,15 +19,14 @@ global:
       id: llama-scout-17b
       url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
       apiToken: ""
-    llama-3-1-8b-instruct-fp8-dynamic:
-      enabled: true
-      id: RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
-      apiToken: unused
-      # Cap completion tokens below vLLM --max-model-len (leaves room for tool schemas + history).
-      maxTokens: 2048
 
 postgres:
   enabled: true
+
+# ai-architecture-charts pgvector subchart (separate Postgres STS). Disabled —
+# vector storage uses the general-sim Postgres image above (pgvector extension).
+pgvector:
+  enabled: false
 
 neo4j:
   enabled: true
