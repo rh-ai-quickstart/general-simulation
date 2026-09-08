@@ -59,12 +59,15 @@ endif
 LOCAL_MODEL_KEY  ?= deepseek-r1-distill-qwen-1-5b
 LOCAL_MODEL_ID   ?= deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 
+LOCAL_COMPOSE := deploy/local/composefile.yml
+
 # ── Phony declarations ────────────────────────────────────────────────────────
 .PHONY: all help \
         build build-postgres build-app \
         deploy deploy-umbrella neo4j-connect \
         package-chart \
         undeploy status lint-charts test-unit smoke-test \
+        local-up local-down local-bootstrap \
         _guard-values-secrets \
         _guard-oc _guard-helm _guard-podman \
         _remove-orphan-neo4j-resources _remove-openshift-routes
@@ -85,6 +88,9 @@ help:
 	@printf "  %-40s %s\n" "lint-charts" "helm lint"
 	@printf "  %-40s %s\n" "test-unit" "Run unit tests (uv run pytest)"
 	@printf "  %-40s %s\n" "smoke-test" "Seed UK demo + POST /query (auto cluster when deployed)"
+	@printf "  %-40s %s\n" "local-up" "Start local Postgres + Neo4j (compose --wait)"
+	@printf "  %-40s %s\n" "local-down" "Stop local Postgres + Neo4j"
+	@printf "  %-40s %s\n" "local-bootstrap" "local-up + schema bootstrap (Postgres + Neo4j)"
 	@printf "\nVariables:\n"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
 	@printf "  %-18s %s\n" "APP_IMAGE_NAME"   "$(APP_IMAGE_NAME)"
@@ -271,6 +277,15 @@ lint-charts: _guard-helm
 
 test-unit:
 	uv run pytest
+
+local-up:
+	podman compose -f $(LOCAL_COMPOSE) up -d --wait
+
+local-down:
+	podman compose -f $(LOCAL_COMPOSE) down
+
+local-bootstrap: local-up
+	uv run python -m lib.graph.bootstrap
 
 smoke-test:
 	@chmod +x scripts/smoke-uk-closure.sh
