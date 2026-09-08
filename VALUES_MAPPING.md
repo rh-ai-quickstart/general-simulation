@@ -70,6 +70,7 @@ subchart defaults  →  helm/values.yaml  →  -f values-secrets.yaml  →  --se
 | File | Role | Committed? |
 |------|------|------------|
 | [`helm/values.yaml`](helm/values.yaml) | **Default config** (bundled in published `.tgz`) | Yes |
+| [`helm/values-full.yaml`](helm/values-full.yaml) | Complete reference (domains, ingestion, all subchart keys) | Yes |
 | [`helm/values-secrets.yaml`](helm/values-secrets.yaml) | Passwords and API tokens | **No** (gitignored) |
 | [`helm/values-secrets.yaml.example`](helm/values-secrets.yaml.example) | Template for secrets file | Yes |
 

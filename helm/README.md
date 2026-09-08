@@ -33,13 +33,17 @@ bootstrap:
 api:
   enabled: true
 ingestion:
-  enabled: true
+  enabled: true   # shipped default in values.yaml is false
 neo4j:
   enabled: true
 llama-stack:
   enabled: true
 llm-service:
-  enabled: false
+  enabled: true   # set false when using MaaS/OpenAI only (no GPU)
 ```
+
+Shipped defaults in `values.yaml` set `ingestion.enabled: false` until you
+enable the CronJob. Domain keys (`api.enabledDomains`, `ingestion.adapterId`, etc.)
+default via `templates/_helpers.tpl`; see `values-full.yaml` for overrides.
 
 **Values flow:** see [`VALUES_MAPPING.md`](../VALUES_MAPPING.md).

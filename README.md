@@ -127,9 +127,15 @@ REST endpoints under `/admin` support automation: ingestion runs, graph browsing
 | `GET /admin/stats` | Aggregate counts from Postgres and Neo4j |
 | `GET /admin/entity-types` | Distinct entity types in the live store |
 | `GET /admin/entities` | Paginated entity list with search/filter |
+| `GET /admin/entities/geojson` | GeoJSON FeatureCollection for entities with geometry |
 | `GET /admin/entities/{id}` | Entity detail and state history |
+| `GET /admin/entities/in-bbox` | Entity IDs inside a WGS84 bounding box |
+| `GET /admin/data/sync-status` | Postgres vs Neo4j entity drift |
 | `GET /admin/ingestion/adapters` | List enabled ingestion adapters |
 | `POST /admin/ingestion/run` | On-demand adapter run |
+| `GET /admin/platform/config` | Read-only platform settings |
+| `POST /admin/platform/bootstrap` | Idempotent schema bootstrap |
+| `GET /admin/imports/formats` | Supported import formats and edge types |
 | `POST /admin/imports/preview` | Validate an import file |
 | `POST /admin/imports/commit` | Commit entities + dependency edges |
 | `GET /admin/graph/nodes` | Entity nodes from Neo4j |
@@ -137,9 +143,12 @@ REST endpoints under `/admin` support automation: ingestion runs, graph browsing
 | `GET /admin/graph/events` | SimulationEvent nodes (optional scenario filter) |
 | `GET /admin/graph/edges` | All dependency / AFFECTED_BY edges |
 | `POST /admin/graph/events` | Inject a new simulation event overlay |
+| `POST /admin/graph/scenarios/{id}/sync-spatial` | Refresh AFFECTED_BY edges from PostGIS bbox |
+| `POST /admin/graph/dependency-edges` | Create or merge a dependency edge |
+| `DELETE /admin/graph/dependency-edges` | Remove a dependency edge |
 | `DELETE /admin/graph/scenarios/{id}` | Remove a scenario from the graph and vector store |
 
-The React Simulation Console (`frontend_ui/`) is not shipped in the current release; it will return as a separate feature branch.
+A web UI is not shipped in the current release; a separate UI will be added in a future release (exact form TBD).
 
 ### The ReAct agent pipeline
 
@@ -150,7 +159,7 @@ The LLM has four tools:
 | Tool | Module | What it does |
 |---|---|---|
 | `get_affected_subgraph` | `src/graph/tool.py` | Neo4j Cypher traversal — finds every entity reachable from the simulation event via dependency edges, plus entity attributes (callsign, route, etc.) |
-| `solve_impact` | `src/reasoning/pipeline.py` | Runs the Stage-2 solver on the affected subgraph — returns impact score, chain length, and ranked response options |
+| `solve_impact` | `src/reasoning/pipeline.py` | Runs the Stage-2 solver on the affected subgraph — returns impact score, chain length, value at risk, ranked response options, and recommended reroutes |
 | `search_scenario_context` | `src/reasoning/search_tool.py` | pgvector semantic search over the scenario's event-narrative collection |
 | `run_ingestion_pull` | `src/ingestion/tool.py` | On-demand live data refresh from a registered adapter |
 
@@ -301,7 +310,8 @@ src/
     fake.py                  # FakeLLMClient for tests (supports response_sequence)
     types.py                 # Message / ToolCall / GenerateResult / Chunk
   api/                       # FastAPI entrypoint + JSON admin API (/admin/*)
-deploy/                      # Containerfiles, Helm charts, OpenShift manifests
+helm/                        # Umbrella Helm chart (authoritative deploy path)
+deploy/                      # Containerfiles, archived manifests, OpenShift helpers
 tests/
 ```
 
@@ -336,11 +346,11 @@ cp .env.example .env
 # Edit .env: set POSTGRES_DSN, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
 # LLM_* settings, and optionally ENABLED_DOMAINS (default: aviation,shipping).
 #
-# With compose defaults:
-#   POSTGRES_DSN=postgresql://sim:sim@localhost:5432/sim
+# With compose defaults (see compose.yaml — Postgres is published on 5433):
+#   POSTGRES_DSN=postgresql://sim:sim@localhost:5433/sim
 #   NEO4J_URI=bolt://localhost:7687
 #   NEO4J_USER=neo4j
-#   NEO4J_PASSWORD=sim
+#   NEO4J_PASSWORD=simsimsim
 #   ENABLED_DOMAINS=aviation,shipping
 ```
 
@@ -374,8 +384,8 @@ SEED_MODE=cluster NAMESPACE=general-simulation make smoke-test
 # Seed only (local or in-cluster)
 uv run seed-demo
 
-# Query only (defaults to UK airspace closure)
-./demo.sh [scenario_id] [question]
+# Query only against a running API (defaults to UK airspace closure)
+./scripts/smoke-uk-closure.sh   # set SEED_MODE=skip to skip seeding
 
 # Shipping LA-closure demo (fixture ingest + graph + overlay)
 uv run python scripts/seed_shipping.py
@@ -433,19 +443,6 @@ LLM_BACKEND=openai
 GENERATION_MODEL_ID=openai/gpt-4o-mini   # or llama-3-2-3b-instruct/meta-llama/Llama-3.2-3B-Instruct
 ```
 
-### Running without a GPU (CI / dev laptops)
-
-Set `LLM_BACKEND=fake` in `.env`. `FakeLLMClient` provides:
-- Deterministic embeddings (hash-seeded unit vectors, correct dimension)
-- In-memory vector store (ingest then search, cosine similarity)
-- `canned_tool_calls` — emitted once then cleared, for single-round tool tests
-- `response_sequence` — an ordered queue of `GenerateResult` objects popped on each `generate()` call; use this to simulate a full multi-step ReAct trace in tests without a real model
-
-```bash
-LLM_BACKEND=fake
-```
-
-
 ## OpenShift Deployment
 
 Deployment is driven by a **Makefile** that wraps `podman build/push` for
@@ -490,11 +487,17 @@ make deploy \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   OPENAI_API_KEY=<key>
 
-# Or: enable llm-service.enabled in helm/values.yaml (needs OpenShift AI + GPU)
+# Or: set llm-service.enabled: false in helm/values.yaml when using MaaS/OpenAI only;
+#     when enabled (default in values.yaml), pass HF_TOKEN for in-cluster vLLM:
 make deploy \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   HF_TOKEN=<hf-token>
 ```
+
+Default toggles in [`helm/values.yaml`](helm/values.yaml): `ingestion.enabled: false`
+(CronJob off until you turn it on), `llm-service.enabled: true` (requires GPU +
+OpenShift AI unless you disable it). See [`helm/values-full.yaml`](helm/values-full.yaml)
+for the complete reference.
 
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
 `neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack to enabled `global.models` providers.
@@ -655,7 +658,7 @@ Short names resolve inside the release namespace (standalone or when this chart 
 | Neo4j Bolt | `bolt://neo4j:7687` | `bolt://neo4j.general-simulation.svc:7687` |
 | Neo4j HTTP | `http://neo4j:7474` | `http://neo4j.general-simulation.svc:7474` |
 | Llama Stack | `http://llamastack:8321` | `http://llamastack.<ns>.svc:8321` |
-| vLLM (`llm-service`) | `http://deepseek-r1-distill-qwen-1-5b-vllm` | `http://deepseek-r1-distill-qwen-1-5b-vllm.<ns>.svc` |
+| vLLM (`llm-service`) | `http://<model-key>-vllm` | `http://<model-key>-vllm.<ns>.svc` |
 | API | `http://general-sim-api:8000` | `http://general-sim-api.general-simulation.svc:8000` |
 
 The umbrella chart under [`helm/`](helm/) is the primary install path (`make deploy`).

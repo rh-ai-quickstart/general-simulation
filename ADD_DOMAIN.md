@@ -218,9 +218,13 @@ ENABLED_DOMAINS=shipping
 Helm:
 
 ```yaml
-# helm/values.yaml — api.enabledDomains and ingestion.adapterId / enabledDomains
-enabledDomains: aviation,shipping
-adapterId: opensky_flights   # which adapter this CronJob runs
+# helm/values.yaml (see helm/values-full.yaml for the full reference)
+api:
+  enabledDomains: aviation,shipping
+ingestion:
+  enabled: true
+  adapterId: opensky_flights   # which adapter the CronJob runs
+  enabledDomains: aviation,shipping
 ```
 
 Then:
@@ -391,9 +395,13 @@ Set `ENABLED_DOMAINS` (or Helm `enabledDomains`) so the domain package loads,
 and set the CronJob `adapterId` to the adapter this job should run:
 
 ```yaml
-# helm/ingestion/values.yaml
-enabledDomains: aviation
-adapterId: opensky_flights
+# helm/values.yaml
+api:
+  enabledDomains: aviation
+ingestion:
+  enabled: true
+  adapterId: opensky_flights
+  enabledDomains: aviation
 ```
 
 For a second adapter on a different schedule, add another CronJob (or Helm
