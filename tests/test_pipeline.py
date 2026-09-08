@@ -27,7 +27,7 @@ from src.core.config import Settings
 from src.core.solver import AffectedSubgraph, EntityState
 from src.llm.fake import FakeLLMClient
 from src.llm.types import GenerateResult, ToolCall
-from src.reasoning.pipeline import run_pipeline
+from src.reasoning.pipeline import _agent_tools, run_pipeline
 from src.reasoning.stage1 import run_stage1
 from src.reasoning.stage2 import run_stage2
 from src.reasoning.stage3 import run_stage3
@@ -424,6 +424,13 @@ async def test_pipeline_react_calls_subgraph_and_solver():
 
 
 # ── Pipeline orchestrator unit tests ──────────────────────────────────────────
+
+
+def test_agent_tools_respects_allow_live_ingestion_flag():
+    enabled = [t["function"]["name"] for t in _agent_tools(allow_live_ingestion=True)]
+    disabled = [t["function"]["name"] for t in _agent_tools(allow_live_ingestion=False)]
+    assert "run_ingestion_pull" in enabled
+    assert "run_ingestion_pull" not in disabled
 
 
 @pytest.mark.asyncio

@@ -161,11 +161,11 @@ Wire runtime config so this domain can run in local + Helm paths.
    ENABLED_DOMAINS=<DOMAIN_ID>
    # or comma-join with aviation if needed
 2. Show CLI: uv run ingest-run --adapter <adapter_id>
-3. Update deploy/helm/ingestion/values.yaml (and api if needed) examples OR
+3. Update `helm/values.yaml` (`ingestion:` and `api:` sections) OR
    document the --set overrides:
    enabledDomains=<DOMAIN_ID>
    adapterId=<adapter_id>
-4. Mention `deploy/helm/api/values.yaml` and `deploy/helm/ingestion/values.yaml`
+4. Mention `helm/values.yaml` (`api.enabledDomains`, `ingestion.adapterId`, `ingestion.enabledDomains`)
    `enabledDomains` if relevant
 5. Do not invent new CronJob templates unless multiple adapters need different schedules
 

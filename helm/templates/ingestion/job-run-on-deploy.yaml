@@ -1,0 +1,39 @@
+{{- if .Values.ingestion.enabled }}
+{{- $runOnDeploy := true }}
+{{- if kindIs "bool" .Values.ingestion.runOnDeploy.enabled }}
+{{- $runOnDeploy = .Values.ingestion.runOnDeploy.enabled }}
+{{- end }}
+{{- if $runOnDeploy }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: general-sim-ingestion-initial
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ingestion.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-initial
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "ingestion.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ingestion-initial
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+      {{- include "ingestion.waitForDepsInit" . | nindent 6 }}
+      containers:
+        {{- include "ingestion.container" . | nindent 8 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- end }}

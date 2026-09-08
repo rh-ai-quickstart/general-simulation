@@ -11,13 +11,17 @@ from pathlib import Path
 
 
 def _seed_script_path() -> Path:
-    # Installed image: /app/scripts/seed_demo.py
+    # Container image: /app/scripts/seed_demo.py (see deploy/app/Containerfile)
     # Local dev:       <repo>/scripts/seed_demo.py
-    root = Path(__file__).resolve().parents[2]
-    path = root / "scripts" / "seed_demo.py"
-    if not path.is_file():
-        raise SystemExit(f"seed script not found: {path}")
-    return path
+    candidates = [
+        Path("/app/scripts/seed_demo.py"),
+    ]
+    for parent in Path(__file__).resolve().parents:
+        candidates.append(parent / "scripts" / "seed_demo.py")
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise SystemExit("seed script not found: scripts/seed_demo.py")
 
 
 def main() -> None:

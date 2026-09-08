@@ -1,12 +1,12 @@
-# Helm values (standalone deploy)
+# general-simulation Helm chart
 
-Consumer-facing values for installing **general-simulation** from this repo.
+Single chart for the General Simulation platform. Postgres, bootstrap, API, and
+ingestion are inline templates; external dependencies are neo4j, llama-stack,
+and llm-service.
 
 | File | Purpose |
 |------|---------|
-| [`values.yaml`](values.yaml) | **Default** — LiteMaaS via `external-model/llama-scout-17b` |
-| [`values-openai.yaml`](values-openai.yaml) | Overlay — OpenAI (`LLM_MODE=openai`) |
-| [`values-local.yaml`](values-local.yaml) | Overlay — in-cluster vLLM (`LLM_MODE=local`) |
+| [`values.yaml`](values.yaml) | **Default config** — component toggles, models, images |
 | [`values-secrets.yaml.example`](values-secrets.yaml.example) | Template for passwords/tokens (copy to `values-secrets.yaml`) |
 
 ## Quick start
@@ -17,60 +17,29 @@ cp helm/values-secrets.yaml.example helm/values-secrets.yaml
 make deploy
 ```
 
-Secrets resolve in this order (highest wins for `--set`; file used when make/env empty):
+## Model providers
 
-1. `make deploy PG_PASSWORD=...` (or `export PG_PASSWORD=...`)
-2. `helm/values-secrets.yaml`
+Enable providers in `values.yaml` via `global.models.<key>.enabled`. Point
+`api.models.generation` at `<providerKey>/<model.id>`. Embeddings, LLM URL,
+domains, route, and wait-for settings default in `templates/_helpers.tpl`.
 
-## LLM modes
-
-| Mode | Command | Token in secrets file |
-|------|---------|------------------------|
-| **maas** (default) | `make deploy` | `global.models.external-model.apiToken` |
-| openai | `make deploy LLM_MODE=openai` | `global.models.openai.apiToken` |
-| local | `make deploy LLM_MODE=local` | `llm-service.secret.hf_token` |
-
-## Post-deploy smoke test
-
-After deploy, seed the UK airspace closure demo and run a query:
-
-```bash
-SEED_MODE=cluster NAMESPACE=general-simulation make smoke-test
-```
-
-Or seed and query separately:
-
-```bash
-oc exec -n general-simulation deployment/general-sim-api -- seed-demo
-./demo.sh   # defaults to opensky-uk-closure-001
-```
-
-## Ingestion on deploy
-
-By default, ingestion runs once immediately after deploy (Helm hook Job), then every 10 minutes via CronJob. Disable the initial run:
+## Component toggles
 
 ```yaml
+postgres:
+  enabled: true
+bootstrap:
+  enabled: true
+api:
+  enabled: true
 ingestion:
-  runOnDeploy:
-    enabled: false
+  enabled: true
+neo4j:
+  enabled: true
+llama-stack:
+  enabled: true
+llm-service:
+  enabled: false
 ```
 
-Override a single secret without editing the file:
-
-```bash
-make deploy MAAS_API_TOKEN='override-token'
-```
-
-Or with Helm directly:
-
-```bash
-helm upgrade --install general-simulation ./deploy/helm/general-simulation \
-  --namespace general-simulation --create-namespace \
-  -f helm/values.yaml \
-  -f helm/values-secrets.yaml
-```
-
-Chart templates live under [`deploy/helm/general-simulation/`](../deploy/helm/general-simulation/).
-
-**Values flow:** see [`VALUES_MAPPING.md`](../VALUES_MAPPING.md) for how consumer
-`helm/values*.yaml` maps into the umbrella chart and subcharts.
+**Values flow:** see [`VALUES_MAPPING.md`](../VALUES_MAPPING.md).

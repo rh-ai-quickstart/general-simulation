@@ -1,0 +1,54 @@
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "postgres.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "postgres.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+{{- $externalAccess := .Values.postgres.externalAccess | default dict }}
+{{- if $externalAccess.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-external
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "postgres.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "postgres.selectorLabels" . | nindent 4 }}
+  type: NodePort
+  ports:
+    - name: postgres-ext
+      port: 5432
+      targetPort: 5432
+      nodePort: {{ $externalAccess.nodePort | default 30432 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "postgres.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "postgres.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+{{- end }}

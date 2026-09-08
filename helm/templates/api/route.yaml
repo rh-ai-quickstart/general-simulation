@@ -1,0 +1,21 @@
+{{- if and .Values.api.enabled (include "api.routeEnabled" . | eq "true") }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: general-sim-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+  annotations:
+    # /query runs multi-round LLM tool calls; default Route timeouts are too short.
+    haproxy.router.openshift.io/timeout: {{ (.Values.api.route | default dict).timeout | default "10m" | quote }}
+spec:
+  to:
+    kind: Service
+    name: general-sim-api
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}

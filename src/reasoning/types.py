@@ -18,6 +18,13 @@ class QueryRequest(BaseModel):
             "injected under this scenario_id form the overlay."
         ),
     )
+    allow_live_ingestion: bool = Field(
+        default=True,
+        description=(
+            "When false, the agent cannot call run_ingestion_pull (use seeded / "
+            "existing store data only). Set false for smoke tests and offline demos."
+        ),
+    )
 
 
 class ResponseOptionOut(BaseModel):

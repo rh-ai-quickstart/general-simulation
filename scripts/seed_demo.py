@@ -15,7 +15,8 @@ Run from the repo root:
     uv run python scripts/seed_demo.py
 
     In-cluster (after deploy):
-    oc exec -n general-simulation deployment/general-sim-api -- seed-demo
+    oc exec -n general-simulation deployment/general-sim-api -c api -- \
+      /app/.venv/bin/python /app/scripts/seed_demo.py
 """
 from __future__ import annotations
 
@@ -845,7 +846,8 @@ async def main() -> None:
     settings = Settings()
     if not settings.neo4j_password:
         raise SystemExit(
-            "NEO4J_PASSWORD is not set. Copy .env.example to .env at the repo root."
+            "NEO4J_PASSWORD is not set. For local seeding, copy .env.example to .env. "
+            "After OpenShift deploy, use: SEED_MODE=cluster make smoke-test"
         )
 
     await _seed_postgres(settings)

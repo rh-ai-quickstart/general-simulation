@@ -1,0 +1,235 @@
+{{- $ls := index .Values "llama-stack" | default dict }}
+{{- if $ls.enabled | default false }}
+{{- $models := include "general-simulation.llamaStackMergeModels" . | fromJson }}
+{{- $mcpServers := include "general-simulation.llamaStackMergeMcpServers" . | fromJson }}
+{{- $embeddingModelId := include "api.embeddingModelId" . }}
+{{- $embeddingDimension := include "api.embeddingDimension" . }}
+{{- $embeddingTrustRemoteCode := include "general-simulation.llamaStackEmbeddingTrustRemoteCode" . | eq "true" }}
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: general-sim-llamastack-config
+  labels:
+    app.kubernetes.io/part-of: general-sim
+    app.kubernetes.io/component: llama-stack
+data:
+  config.yaml: |
+    version: 2
+    image_name: starter
+    apis:
+    - agents
+    - batches
+    - datasetio
+    - eval
+    - files
+    - inference
+    - post_training
+    - safety
+    - scoring
+    - tool_runtime
+    - vector_io
+    providers:
+      inference:
+      {{- range $key, $model := $models }}
+      {{- if $model.enabled }}
+      - provider_id: {{ $key }}
+        provider_type: remote::vllm
+        config:
+          base_url: {{ $model.url }}
+          api_token: {{ $model.apiToken | default "fake" }}
+          max_tokens: {{ $model.maxTokens | default 4096 }}
+          tls_verify: {{ $model.tlsVerify | default false }}
+      {{- end }}
+      {{- end }}
+      {{- if ($ls.vertexai | default dict).enabled }}
+      - provider_id: {{ $ls.vertexai.projectId }}-vertexai
+        provider_type: remote::vertexai
+        config:
+          project: {{ $ls.vertexai.projectId }}
+          location: {{ $ls.vertexai.location }}
+      {{- end }}
+      - provider_id: sentence-transformers
+        provider_type: inline::sentence-transformers
+        {{- if $embeddingTrustRemoteCode }}
+        config:
+          trust_remote_code: true
+        {{- end }}
+      {{- if ($ls.pgvector | default dict).enabled | default true }}
+      vector_io:
+      - provider_id: pgvector
+        provider_type: remote::pgvector
+        config:
+          host: ${env.POSTGRES_HOST:=pgvector}
+          port: ${env.POSTGRES_PORT:=5432}
+          db: ${env.POSTGRES_DBNAME:=rag_blueprint}
+          user: ${env.POSTGRES_USER:=postgres}
+          password: ${env.POSTGRES_PASSWORD:=rag_password}
+          persistence:
+            {{- $kvstore := $ls.vectorIOKvstore | default dict -}}
+            {{- if $kvstore }}
+            {{- toYaml $kvstore | nindent 12 }}
+            {{- else }}
+            namespace: vector_io::pgvector
+            backend: kv_default
+            {{- end }}
+      {{- end }}
+      files:
+      - provider_id: meta-reference-files
+        provider_type: inline::localfs
+        config:
+          storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/starter/files}
+          metadata_store:
+            table_name: files_metadata
+            backend: sql_default
+      safety:
+      - provider_id: llama-guard
+        provider_type: inline::llama-guard
+        config:
+          excluded_categories: []
+      agents:
+      {{- with $ls.providers.agents }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      post_training:
+      - provider_id: torchtune-cpu
+        provider_type: inline::torchtune-cpu
+        config:
+          checkpoint_format: meta
+      eval:
+      - provider_id: meta-reference
+        provider_type: inline::meta-reference
+        config:
+          kvstore:
+            namespace: eval
+            backend: kv_default
+      datasetio:
+      - provider_id: huggingface
+        provider_type: remote::huggingface
+        config:
+          kvstore:
+            namespace: datasetio::huggingface
+            backend: kv_default
+      - provider_id: localfs
+        provider_type: inline::localfs
+        config:
+          kvstore:
+            namespace: datasetio::localfs
+            backend: kv_default
+      scoring:
+      - provider_id: basic
+        provider_type: inline::basic
+      - provider_id: llm-as-judge
+        provider_type: inline::llm-as-judge
+      - provider_id: braintrust
+        provider_type: inline::braintrust
+        config:
+          openai_api_key: ${env.OPENAI_API_KEY:=}
+      tool_runtime:
+      - provider_id: brave-search
+        provider_type: remote::brave-search
+        config:
+          api_key: ${env.BRAVE_SEARCH_API_KEY:=}
+          max_results: 3
+      - provider_id: tavily-search
+        provider_type: remote::tavily-search
+        config:
+          api_key: ${env.TAVILY_SEARCH_API_KEY:=}
+          max_results: 3
+      - provider_id: rag-runtime
+        provider_type: inline::rag-runtime
+      - provider_id: model-context-protocol
+        provider_type: remote::model-context-protocol
+      batches:
+      - provider_id: reference
+        provider_type: inline::reference
+        config:
+          kvstore:
+            namespace: batches
+            backend: kv_default
+    storage:
+      backends:
+        {{- if and $ls.storage $ls.storage.backends }}
+        {{- toYaml $ls.storage.backends | nindent 8 }}
+        {{- else }}
+        kv_default:
+          type: kv_sqlite
+          db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/starter}/kvstore.db
+        sql_default:
+          type: sql_sqlite
+          db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/starter}/sql_store.db
+        {{- end }}
+      stores:
+        metadata:
+          namespace: registry
+          backend: kv_default
+        inference:
+          table_name: inference_store
+          backend: sql_default
+          max_write_queue_size: 10000
+          num_writers: 4
+        conversations:
+          table_name: openai_conversations
+          backend: sql_default
+    registered_resources:
+      {{- if include "general-simulation.llamaStackHasEnabledModels" . }}
+      models:
+      {{- range $key, $model := $models }}
+      {{- if and $model.enabled (ne $key "remote-llm") }}
+      - metadata: {}
+        model_id: {{ $model.id }}
+        provider_id: {{ $key }}
+        model_type: llm
+      {{- end }}
+      {{- end }}
+      - metadata:
+          embedding_dimension: {{ $embeddingDimension }}
+        model_id: {{ $embeddingModelId }}
+        provider_id: sentence-transformers
+        provider_model_id: {{ $embeddingModelId }}
+        model_type: embedding
+      {{- else }}
+      models:
+      - metadata:
+          embedding_dimension: {{ $embeddingDimension }}
+        model_id: {{ $embeddingModelId }}
+        provider_id: sentence-transformers
+        provider_model_id: {{ $embeddingModelId }}
+        model_type: embedding
+      {{- end }}
+      vector_dbs: []
+      datasets: []
+      scoring_fns: []
+      benchmarks: []
+      tool_groups:
+      - toolgroup_id: builtin::websearch
+        provider_id: tavily-search
+      - toolgroup_id: builtin::rag
+        provider_id: rag-runtime
+      {{- range $key, $server := $mcpServers }}
+      - toolgroup_id: mcp::{{ $key }}
+        provider_id: model-context-protocol
+        mcp_endpoint:
+          uri: {{ $server.uri }}
+      {{- end }}
+    server:
+      port: 8321
+      {{- if $ls.auth }}
+      auth:
+        {{- with $ls.auth.provider_config }}
+        provider_config:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $ls.auth.access_policy }}
+        access_policy:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    telemetry:
+      enabled: true
+    vector_stores:
+      default_provider_id: pgvector
+      default_embedding_model:
+        provider_id: sentence-transformers
+        model_id: {{ $embeddingModelId }}
+{{- end }}

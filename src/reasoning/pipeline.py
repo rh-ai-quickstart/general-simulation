@@ -117,13 +117,25 @@ SOLVER_TOOL_SCHEMA_STANDALONE: dict[str, Any] = {
 
 # Ordered list of all tools exposed to the agent (schema rebuilt per call so
 # ENABLED_DOMAINS changes are reflected without restarting imports).
-def _agent_tools() -> list[dict[str, Any]]:
-    return [
+def _agent_tools(*, allow_live_ingestion: bool = True) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = [
         GET_SUBGRAPH_TOOL_SCHEMA,
         SOLVER_TOOL_SCHEMA_STANDALONE,
         SEARCH_CONTEXT_TOOL_SCHEMA,
-        get_ingestion_tool_schema(),
     ]
+    if allow_live_ingestion:
+        tools.append(get_ingestion_tool_schema())
+    return tools
+
+
+def _system_prompt(*, allow_live_ingestion: bool = True) -> str:
+    prompt = _SYSTEM_PROMPT
+    if not allow_live_ingestion:
+        prompt += (
+            "\n\n  - Do NOT call run_ingestion_pull — use only entities already "
+            "loaded in the simulation store (seeded or prior ingestion)."
+        )
+    return prompt
 
 
 @dataclass
@@ -179,7 +191,9 @@ async def run_pipeline(
     )
 
     messages: list[Message] = [
-        Message(role="system", content=_SYSTEM_PROMPT),
+        Message(role="system", content=_system_prompt(
+            allow_live_ingestion=request.allow_live_ingestion,
+        )),
         Message(
             role="user",
             content=(
@@ -187,9 +201,17 @@ async def run_pipeline(
                 f"QUESTION: {request.question}\n\n"
                 "Use the available tools to investigate this scenario, then provide "
                 "a specific, actionable answer."
+                + (
+                    "\n\nUse only data already in the simulation store; do not "
+                    "request a live ingestion pull."
+                    if not request.allow_live_ingestion
+                    else ""
+                )
             ),
         ),
     ]
+
+    agent_tools = _agent_tools(allow_live_ingestion=request.allow_live_ingestion)
 
     final_result = None
 
@@ -200,7 +222,7 @@ async def run_pipeline(
         tool_choice = "required" if not state.tool_call_trace else "auto"
         result = await llm_client.generate(
             messages,
-            tools=_agent_tools(),
+            tools=agent_tools,
             tool_choice=tool_choice,
         )
 
@@ -212,7 +234,7 @@ async def run_pipeline(
             )
             result = await llm_client.generate(
                 messages,
-                tools=_agent_tools(),
+                tools=agent_tools,
                 tool_choice="required",
             )
 
@@ -379,9 +401,6 @@ async def _dispatch_tool(
         return await call_ingestion_tool(tc.arguments, pool, neo4j_driver=driver)
 
     return {"success": False, "error": f"Unknown tool '{tc.tool_name}'."}
-
-
-# ── Response helpers ──────────────────────────────────────────────────────────
 
 
 def _build_solver_out(solver_result: SolverResult | None) -> SolverResultOut:

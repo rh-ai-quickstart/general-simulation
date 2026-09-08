@@ -450,7 +450,7 @@ LLM_BACKEND=fake
 
 Deployment is driven by a **Makefile** that wraps `podman build/push` for
 images and **Helm** for all Kubernetes resources.  Each component has its own
-Helm chart under `deploy/helm/` so components can be upgraded independently.
+Helm chart under [`helm/`](helm/) so components can be upgraded independently.
 
 ### Prerequisites
 
@@ -480,25 +480,24 @@ make build
 # 3. One umbrella release (Postgres + Neo4j + Llama Stack + API + ingestion)
 #    Secrets via --set only — never committed to values files.
 
-# Default: Llama Stack → LiteMaaS
+# Default: LiteMaaS chat (external-model); embeddings via inline sentence-transformers
 make deploy \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   MAAS_API_TOKEN=<token>
 
-# Or: Llama Stack → OpenAI
-make deploy LLM_MODE=openai \
+# Or: enable global.models.openai.enabled in helm/values.yaml, then:
+make deploy \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   OPENAI_API_KEY=<key>
 
-# Or: Llama Stack → in-cluster vLLM (needs OpenShift AI + GPU)
-make deploy LLM_MODE=local \
+# Or: enable llm-service.enabled in helm/values.yaml (needs OpenShift AI + GPU)
+make deploy \
   PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
   HF_TOKEN=<hf-token>
 ```
 
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
-`make deploy` applies the umbrella Helm chart, which creates `neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack for the chosen
-`LLM_MODE` (`maas`, `openai`, or `local`).
+`neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack to enabled `global.models` providers.
 
 ---
 
@@ -506,14 +505,10 @@ make deploy LLM_MODE=local \
 
 | Chart | Path | Key resources |
 |---|---|---|
-| `general-simulation` (umbrella) | `deploy/helm/general-simulation` | Single release; values in [`helm/values.yaml`](helm/values.yaml) |
-| `postgres` | `deploy/helm/postgres` | StatefulSet, Services, anyuid SCC, Secret, init SQL |
-| `neo4j` | `neo4j/neo4j` (official) | StatefulSet; `neo4j-sa` + anyuid for UID 7474 |
-| `bootstrap` | `deploy/helm/bootstrap` | Schema Job (Helm hook) |
-| `llama-stack` | [ai-architecture-charts](https://rh-ai-quickstart.github.io/ai-architecture-charts) | Inference gateway (`llamastack:8321`) |
-| `llm-service` | same repo | In-cluster vLLM; enabled only for `LLM_MODE=local` |
-| `api` | `deploy/helm/api` | Deployment, Service, Route |
-| `ingestion` | `deploy/helm/ingestion` | CronJob |
+| `general-simulation` | `helm/` | Single chart: postgres, bootstrap, api, ingestion inline |
+| `neo4j` | external dep | Official Neo4j chart |
+| `llama-stack` | external dep | Inference gateway (`llamastack:8321`) |
+| `llm-service` | external dep | In-cluster vLLM; enable via `llm-service.enabled` |
 
 ---
 
@@ -539,28 +534,20 @@ make build REGISTRY=quay.io/myorg TAG=v1.2.3
 
 ---
 
-### Step 2 — Deploy Postgres
+### Step 2 — Deploy (recommended)
+
+Use the single umbrella release — Postgres, Neo4j, bootstrap, Llama Stack, API,
+and ingestion are all in [`helm/`](helm/):
 
 ```bash
-make deploy-postgres PG_PASSWORD=<your-password>
+make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> MAAS_API_TOKEN=<tok>
 ```
 
-This installs the `postgres` Helm chart which:
-- Creates the `general-simulation` namespace (idempotent)
-- Applies a `ClusterRoleBinding` granting `anyuid` SCC to the `postgres-sa` ServiceAccount (so the container can run as UID 999)
-- Creates the `postgres-credentials` Secret from `--set postgres.password=...`
-- Mounts an init-SQL ConfigMap that enables the `vector` and `postgis` extensions on first startup
-- Deploys a StatefulSet with a 10 Gi PVC and readiness/liveness probes
-
-Wait for Postgres to be ready:
-
-```bash
-oc rollout status statefulset/postgres -n general-simulation --timeout=300s
-```
+Component toggles live in [`helm/values.yaml`](helm/values.yaml) under `postgres.enabled`, `api.enabled`, etc.
 
 ---
 
-### Step 3 — Deploy Neo4j
+### Advanced: standalone Neo4j (debug only)
 
 ```bash
 make deploy-neo4j NEO4J_PASSWORD=<your-password>
@@ -587,24 +574,11 @@ make neo4j-connect
 
 ---
 
-### Step 4 — Run the schema bootstrap Job
+### In-cluster vLLM
 
-```bash
-make deploy-bootstrap PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password>
-```
-
-The `bootstrap` chart deploys a Job as a Helm `post-install,post-upgrade` hook.
-Helm waits for the Job to complete before marking the release successful
-(`--atomic --timeout 3m`).  The Job is deleted automatically on success.
-Re-running `make deploy-bootstrap` is fully idempotent.
-
----
-
-### Step 4 — In-cluster vLLM (local mode only)
-
-Prefer `make deploy LLM_MODE=local`. That enables `llm-service` inside the
-umbrella and points Llama Stack at the in-cluster InferenceService
-(`<model-key>-vllm`).
+Set `llm-service.enabled: true` in [`helm/values.yaml`](helm/values.yaml) and enable
+the in-cluster model under `global.models`. Llama Stack points at the
+InferenceService (`<model-key>-vllm`).
 
 Standalone / debug:
 
@@ -621,50 +595,16 @@ Legacy pre-Helm manifests are under `deploy/archived/openshift/` and
 
 ---
 
-### Step 6 — Deploy the API and ingestion CronJob
-
-```bash
-make deploy-api        PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password> OPENAI_API_KEY=<your-key>
-make deploy-ingestion  PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password> OPENAI_API_KEY=<your-key>
-```
-
-The `api` chart creates 2 replicas with topology spread across nodes and an
-OpenShift Route with TLS edge termination.
-
-Smoke test after deploy:
-
-```bash
-ROUTE=$(oc get route general-sim-api -n general-simulation -o jsonpath='{.spec.host}')
-curl -s https://$ROUTE/health | jq .
-# Expected: {"status": "ok", "db": "reachable"}
-```
-
-Trigger the ingestion job immediately to verify end-to-end:
-
-```bash
-oc create job ingestion-manual \
-  --from=cronjob/general-sim-ingestion \
-  -n general-simulation
-
-oc wait job/ingestion-manual \
-  -n general-simulation --for=condition=complete --timeout=120s
-```
-
----
-
 ### Per-component upgrades
 
-After changing code or config, rebuild the affected image and upgrade only that
-chart — no need to re-deploy everything:
+After changing code, rebuild and redeploy the umbrella chart:
 
 ```bash
 make build-app
-make deploy-api PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password>
+make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw>
 ```
 
-To upgrade a chart's non-secret values, edit `deploy/helm/<chart>/values.yaml`
-and re-run the `make deploy-<chart>` target.  Secrets are always supplied via
-`--set` and are never stored in values files.
+To change config, edit [`helm/values.yaml`](helm/values.yaml) and run `make deploy`.
 
 ---
 
@@ -684,28 +624,24 @@ make undeploy
 make help
 make build
 make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> MAAS_API_TOKEN=<tok>
-make deploy LLM_MODE=openai PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
-make deploy LLM_MODE=local PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> HF_TOKEN=<tok>
 make neo4j-connect
 make status
 make lint-charts
 make undeploy
-# Advanced per-component: deploy-postgres, deploy-neo4j, deploy-bootstrap,
-# deploy-api, deploy-ingestion, deploy-llm-service
+# Advanced standalone: deploy-neo4j, deploy-llm-service
 ```
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_MODE` | `maas` | `maas`, `openai`, or `local` |
 | `REGISTRY` | `quay.io/rh-ai-quickstart` | Image registry root |
 | `APP_IMAGE_NAME` | `general-sim-api` | App image name under `REGISTRY` |
 | `NAMESPACE` | `general-simulation` | Target OpenShift namespace |
 | `TAG` | `latest` | Image tag |
 | `PG_PASSWORD` | *(none)* | Required |
 | `NEO4J_PASSWORD` | *(none)* | Required |
-| `MAAS_API_TOKEN` | *(none)* | Required when `LLM_MODE=maas` |
-| `OPENAI_API_KEY` | *(none)* | Required when `LLM_MODE=openai` |
-| `HF_TOKEN` | *(none)* | Required when `LLM_MODE=local` |
+| `MAAS_API_TOKEN` | *(none)* | When `global.models.external-model` enabled |
+| `OPENAI_API_KEY` | *(none)* | When `global.models.openai.enabled` |
+| `HF_TOKEN` | *(none)* | When `llm-service.enabled` |
 
 ---
 
@@ -719,16 +655,13 @@ Short names resolve inside the release namespace (standalone or when this chart 
 | Neo4j Bolt | `bolt://neo4j:7687` | `bolt://neo4j.general-simulation.svc:7687` |
 | Neo4j HTTP | `http://neo4j:7474` | `http://neo4j.general-simulation.svc:7474` |
 | Llama Stack | `http://llamastack:8321` | `http://llamastack.<ns>.svc:8321` |
-| vLLM (`llm-service`, local mode) | `http://deepseek-r1-distill-qwen-1-5b-vllm` | `http://deepseek-r1-distill-qwen-1-5b-vllm.<ns>.svc` |
+| vLLM (`llm-service`) | `http://deepseek-r1-distill-qwen-1-5b-vllm` | `http://deepseek-r1-distill-qwen-1-5b-vllm.<ns>.svc` |
 | API | `http://general-sim-api:8000` | `http://general-sim-api.general-simulation.svc:8000` |
 
-The umbrella chart under `deploy/helm/general-simulation` is the primary
-install path (`make deploy`). Consumer values live at [`helm/values.yaml`](helm/values.yaml).
-See [`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md)
-and [`helm/README.md`](helm/README.md).
+The umbrella chart under [`helm/`](helm/) is the primary install path (`make deploy`).
+See [`helm/README.md`](helm/README.md).
 
 ---
 
 Pre-Helm Kubernetes manifests are preserved under `deploy/archived/openshift/`
-for reference.  The Helm charts under `deploy/helm/` are the authoritative
-deployment path going forward.
+for reference.  The Helm chart under `helm/` is the authoritative deployment path.

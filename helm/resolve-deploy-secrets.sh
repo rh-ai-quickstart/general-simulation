@@ -2,9 +2,10 @@
 # Resolve deploy secrets: make/env var overrides values-secrets.yaml.
 # Priority: 1) non-empty env/make variable  2) helm/values-secrets.yaml
 #
-# Required environment:
-#   LLM_MODE, CHART_VALUES_SECRETS
-#   PG_PASSWORD, NEO4J_PASSWORD, MAAS_API_TOKEN, OPENAI_API_KEY, HF_TOKEN
+# Required secrets are derived from helm/values.yaml:
+#   - global.postgres.password, global.neo4j.password (always)
+#   - global.models.<key>.apiToken for each enabled model with a remote url
+#   - llm-service.secret.hf_token when llm-service.enabled is true
 #
 # Exports for the caller (deploy recipe):
 #   SECRET_HELM_ARGS — non-empty --set-string flags only for explicit overrides
@@ -13,9 +14,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 read_secret() { "$SCRIPT_DIR/read-secret.sh" "$@"; }
 
+CHART_VALUES="${CHART_VALUES:-$SCRIPT_DIR/values.yaml}"
+CHART_VALUES_SECRETS="${CHART_VALUES_SECRETS:-$SCRIPT_DIR/values-secrets.yaml}"
+
 is_placeholder() {
   case "$1" in
     ""|CHANGE_ME|changeme|CHANGEME) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_enabled() {
+  case "$(read_secret "$CHART_VALUES" "$1")" in
+    true|True|TRUE|yes|Yes|YES|1) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -26,7 +37,7 @@ resolve() {
     printf '%s' "$env_val"
     return
   fi
-  if [ -f "${CHART_VALUES_SECRETS:-}" ]; then
+  if [ -f "${CHART_VALUES_SECRETS}" ]; then
     read_secret "$CHART_VALUES_SECRETS" "$yaml_path"
   fi
 }
@@ -34,7 +45,7 @@ resolve() {
 require_secret() {
   local label="$1" effective="$2"
   if is_placeholder "$effective"; then
-    printf 'ERROR: %s is required (make/env var, or %s).\n' "$label" "${CHART_VALUES_SECRETS:-helm/values-secrets.yaml}" >&2
+    printf 'ERROR: %s is required (make/env var, or %s).\n' "$label" "$CHART_VALUES_SECRETS" >&2
     exit 1
   fi
 }
@@ -55,26 +66,33 @@ SECRET_HELM_ARGS=""
 [ -n "${PG_PASSWORD:-}" ] && append_set global.postgres.password "$PG_PASSWORD"
 [ -n "${NEO4J_PASSWORD:-}" ] && append_set global.neo4j.password "$NEO4J_PASSWORD"
 
-case "${LLM_MODE:-maas}" in
-  maas)
-    MAAS_EFFECTIVE="$(resolve "${MAAS_API_TOKEN:-}" global.models.external-model.apiToken)"
-    require_secret "MAAS_API_TOKEN (global.models.external-model.apiToken)" "$MAAS_EFFECTIVE"
-    [ -n "${MAAS_API_TOKEN:-}" ] && append_set global.models.external-model.apiToken "$MAAS_API_TOKEN"
-    ;;
-  openai)
-    OPENAI_EFFECTIVE="$(resolve "${OPENAI_API_KEY:-}" global.models.openai.apiToken)"
-    require_secret "OPENAI_API_KEY (global.models.openai.apiToken)" "$OPENAI_EFFECTIVE"
-    [ -n "${OPENAI_API_KEY:-}" ] && append_set global.models.openai.apiToken "$OPENAI_API_KEY"
-    ;;
-  local)
-    HF_EFFECTIVE="$(resolve "${HF_TOKEN:-}" llm-service.secret.hf_token)"
-    require_secret "HF_TOKEN (llm-service.secret.hf_token)" "$HF_EFFECTIVE"
-    [ -n "${HF_TOKEN:-}" ] && append_set llm-service.secret.hf_token "$HF_TOKEN"
-    ;;
-  *)
-    printf "ERROR: LLM_MODE must be 'maas', 'openai', or 'local' (got '%s').\n" "${LLM_MODE:-}" >&2
-    exit 1
-    ;;
-esac
+# Enabled remote models need apiToken (skip in-cluster providers without url).
+for model_key in openai external-model nomic deepseek-r1-distill-qwen-1-5b; do
+  if ! is_enabled "global.models.${model_key}.enabled"; then
+    continue
+  fi
+  url="$(read_secret "$CHART_VALUES" "global.models.${model_key}.url")"
+  if [ -z "$url" ]; then
+    continue
+  fi
+  token_path="global.models.${model_key}.apiToken"
+  env_var=""
+  case "$model_key" in
+    openai) env_var="${OPENAI_API_KEY:-}" ;;
+    external-model) env_var="${MAAS_API_TOKEN:-}" ;;
+    nomic) env_var="${MAAS_API_TOKEN:-}" ;;
+  esac
+  effective="$(resolve "$env_var" "$token_path")"
+  require_secret "${model_key} apiToken (${token_path})" "$effective"
+  if [ -n "$env_var" ]; then
+    append_set "$token_path" "$env_var"
+  fi
+done
+
+if is_enabled llm-service.enabled; then
+  HF_EFFECTIVE="$(resolve "${HF_TOKEN:-}" llm-service.secret.hf_token)"
+  require_secret "HF_TOKEN (llm-service.secret.hf_token)" "$HF_EFFECTIVE"
+  [ -n "${HF_TOKEN:-}" ] && append_set llm-service.secret.hf_token "$HF_TOKEN"
+fi
 
 export SECRET_HELM_ARGS

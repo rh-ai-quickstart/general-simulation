@@ -1,98 +1,67 @@
 # Values mapping reference
 
-How Helm values flow from a **consumer** install into the `general-simulation`
-umbrella chart and its subcharts.
+How Helm values flow through the `general-simulation` umbrella chart and its
+subcharts.
 
-For quick-start commands see [`helm/README.md`](helm/README.md). Chart templates
-live under [`deploy/helm/general-simulation/`](deploy/helm/general-simulation/).
+For quick-start commands see [`helm/README.md`](helm/README.md). The chart
+lives at [`helm/`](helm/).
 
 ---
 
 ## Mental model
 
-Three small pictures are easier than one busy chart.
-
-### 1. What you edit → what Helm installs
+### 1. Single chart directory
 
 ```mermaid
 flowchart LR
-  subgraph edit [You edit — repo helm/]
+  subgraph helm_dir [helm/]
     V[values.yaml]
-    O[values-openai / values-local]
     S[values-secrets.yaml]
-    M[make --set]
+    T[templates + subcharts]
   end
 
-  U[Umbrella chart<br/>deploy/helm/general-simulation]
-  edit --> U
+  V --> T
+  S --> T
+  M[make --set] --> T
 ```
 
-Day-to-day config lives under **`helm/`**. The umbrella chart wires dependencies
-and a few shared secrets (Neo4j auth, Llama Stack pgvector, OpenShift SCC).
+All chart templates and default values live under **`helm/`**. Edit
+`helm/values.yaml` for day-to-day config; put secrets in
+`helm/values-secrets.yaml` (gitignored).
 
-### 2. Umbrella → components
+### 2. Chart → components
 
-Top-level keys in your values file map **one-to-one** to subchart names
-(`api`, `postgres`, `ingestion`, …). The umbrella also renders a handful of
-its own templates (Neo4j auth secret, etc.).
+Postgres, bootstrap, API, and ingestion are **inline templates** under
+`helm/templates/`. External subchart dependencies: neo4j, llama-stack,
+llm-service.
 
 ```mermaid
 flowchart TB
   U[general-simulation]
 
-  U --> PG[postgres]
-  U --> NJ[neo4j]
-  U --> BS[bootstrap Job]
-  U --> LS[llama-stack]
-  U --> API[api]
-  U --> ING[ingestion]
-  U -. local LLM only .-> VLLM[llm-service]
-
-  BS -->|schema hook| PG
-  BS -->|schema hook| NJ
-  API --> LS
-  ING --> LS
+  U --> PG[postgres inline]
+  U --> NJ[neo4j dep]
+  U --> BS[bootstrap inline]
+  U --> LS[llama-stack dep]
+  U --> API[api inline]
+  U --> ING[ingestion inline]
+  U -. optional .-> VLLM[llm-service dep]
 ```
 
-`llm-service` is enabled only for `LLM_MODE=local`; MaaS and OpenAI modes talk
-to upstream APIs through Llama Stack instead.
+Enable providers via `global.models.<key>.enabled`. Set `llm-service.enabled`
+for in-cluster vLLM.
 
-### 3. Two ways settings reach a subchart
+### 3. Scoped vs global keys
 
-This is the part the old diagram tried to show with duplicate arrows.
-
-```mermaid
-flowchart TB
-  subgraph scoped [Scoped keys — one subchart]
-    APIK["api.*  →  api chart"]
-    INGK["ingestion.*  →  ingestion chart"]
-    PGK["postgres.*  →  postgres chart"]
-  end
-
-  subgraph shared [Shared keys — every subchart]
-    G["global.*<br/>registry, passwords, models"]
-  end
-
-  G --> PG[postgres]
-  G --> API[api]
-  G --> ING[ingestion]
-  G --> BS[bootstrap]
-  G --> LS[llama-stack]
-```
-
-**Scoped** — e.g. `api.route.enabled` only affects the API Deployment/Route.  
-**Global** — e.g. `global.postgres.password` is copied into each subchart’s
-`.Values.global`; helpers use `coalesce(local, global)` so you usually set
-passwords once under `global`.
+**Scoped** — e.g. `api.route.enabled` only affects the API chart.  
+**Global** — e.g. `global.postgres.password` is copied into each subchart's
+`.Values.global`.
 
 ### Merge priority (later wins)
 
 ```text
-subchart defaults  →  umbrella defaults  →  -f values.yaml  →  -f overlay  →  -f secrets  →  --set
+subchart defaults  →  helm/values.yaml  →  -f values-secrets.yaml  →  --set
 ```
-
-Helm merges values **depth-first**: subchart defaults → umbrella defaults →
-each `-f` file in order → `--set` / `--set-string` (highest priority).
 
 ---
 
@@ -100,37 +69,27 @@ each `-f` file in order → `--set` / `--set-string` (highest priority).
 
 | File | Role | Committed? |
 |------|------|------------|
-| [`deploy/helm/general-simulation/values.yaml`](deploy/helm/general-simulation/values.yaml) | Minimal defaults shipped inside the published chart `.tgz` | Yes |
-| [`helm/values.yaml`](helm/values.yaml) | **Primary consumer config** for standalone deploy from this repo | Yes |
-| [`helm/values-openai.yaml`](helm/values-openai.yaml) | LLM mode overlay (`LLM_MODE=openai`) | Yes |
-| [`helm/values-local.yaml`](helm/values-local.yaml) | LLM mode overlay (`LLM_MODE=local`) | Yes |
+| [`helm/values.yaml`](helm/values.yaml) | **Default config** (bundled in published `.tgz`) | Yes |
 | [`helm/values-secrets.yaml`](helm/values-secrets.yaml) | Passwords and API tokens | **No** (gitignored) |
 | [`helm/values-secrets.yaml.example`](helm/values-secrets.yaml.example) | Template for secrets file | Yes |
-| `deploy/helm/<subchart>/values.yaml` | Per-subchart defaults when chart is rendered alone | Yes |
-
-**Rule of thumb:** edit `helm/values.yaml` (and overlays) for day-to-day deploys.
-Only change `deploy/helm/general-simulation/values.yaml` when you want new
-**published chart** defaults.
 
 ---
 
 ## Standalone install: merge order
 
-`make deploy` (see [`Makefile`](Makefile)) runs:
+`make deploy` runs:
 
 ```text
-helm upgrade --install general-simulation ./deploy/helm/general-simulation \
-  -f helm/values.yaml \
-  [-f helm/values-<LLM_MODE>.yaml]    # skipped when LLM_MODE=maas (default)
+helm upgrade --install general-simulation ./helm \
   [-f helm/values-secrets.yaml]     # if file exists
   --set global.registry=...
   --set global.imageTag=...
   --set global.images.app=...
   --set global.images.postgres=...
-  [--set-string global.postgres.password=...]   # only when make/env overrides file
-  [--set-string global.neo4j.password=...]
-  [--set-string global.models.*.apiToken=...]   # mode-dependent
+  [--set-string secrets from resolve-deploy-secrets.sh]
 ```
+
+Chart `values.yaml` is loaded automatically (no `-f` needed).
 
 ### Secret resolution (`helm/resolve-deploy-secrets.sh`)
 
@@ -138,317 +97,94 @@ helm upgrade --install general-simulation ./deploy/helm/general-simulation \
 |----------|--------|---------|
 | 1 (highest) | Non-empty `make` / env var | `make deploy PG_PASSWORD=secret` |
 | 2 | `helm/values-secrets.yaml` | `global.postgres.password` |
-| — | Required check | Fails if still empty / `CHANGE_ME` |
 
-`--set-string` is emitted **only** for explicit make/env overrides so an empty
-`PG_PASSWORD=` does not wipe a value loaded from the secrets file.
+Required secrets depend on `helm/values.yaml`:
 
-| `LLM_MODE` | Required secret | YAML path |
-|------------|-----------------|-----------|
-| `maas` (default) | `MAAS_API_TOKEN` | `global.models.external-model.apiToken` |
-| `openai` | `OPENAI_API_KEY` | `global.models.openai.apiToken` |
-| `local` | `HF_TOKEN` | `llm-service.secret.hf_token` |
-
----
-
-## Umbrella → subchart routing
-
-The umbrella [`Chart.yaml`](deploy/helm/general-simulation/Chart.yaml) declares
-dependencies. Each **top-level key** matching a dependency name is passed to
-that subchart as its root `.Values` (merged with the subchart's own defaults).
-
-| Parent key (`helm/values.yaml`) | Subchart | `condition` |
-|---------------------------------|----------|-------------|
-| `postgres` | `postgres` | `postgres.enabled` |
-| `neo4j` | `neo4j` (official chart) | `neo4j.enabled` |
-| `bootstrap` | `bootstrap` | `bootstrap.enabled` |
-| `llama-stack` | `llama-stack` (external) | `llama-stack.enabled` |
-| `llm-service` | `llm-service` (external) | `llm-service.enabled` |
-| `api` | `api` | `api.enabled` |
-| `ingestion` | `ingestion` | `ingestion.enabled` |
-
-Keys with hyphens (`llama-stack`, `llm-service`) must be quoted in YAML:
-
-```yaml
-"llama-stack":
-  enabled: true
-```
-
-### `global` — shared across every subchart
-
-Helm copies `global:` from the parent into **each** subchart's
-`.Values.global`. Use it for credentials and image coordinates that many
-components need.
-
-```yaml
-global:
-  registry: quay.io/rh-ai-quickstart
-  imageTag: latest
-  images:
-    app: general-sim-api
-    postgres: general-sim-postgres
-  postgres:
-    host: postgres
-    password: ""      # set via secrets file or --set-string
-  neo4j:
-    host: neo4j
-    password: ""
-  models:             # consumed by llama-stack subchart
-    external-model:
-      enabled: true
-      apiToken: ""
-```
+| Condition | Required secret | YAML path |
+|-----------|-----------------|-----------|
+| Always | `PG_PASSWORD` | `global.postgres.password` |
+| Always | `NEO4J_PASSWORD` | `global.neo4j.password` |
+| `global.models.external-model.enabled` + `url` set | `MAAS_API_TOKEN` | `global.models.external-model.apiToken` |
+| `global.models.nomic.enabled` + `url` set | token in secrets file | `global.models.nomic.apiToken` |
+| `global.models.openai.enabled` + `url` set | `OPENAI_API_KEY` | `global.models.openai.apiToken` |
+| `llm-service.enabled` | `HF_TOKEN` | `llm-service.secret.hf_token` |
 
 ---
 
-## `global` and subchart-local fallbacks
+## Component routing
 
-First-party subcharts (`postgres`, `bootstrap`, `api`, `ingestion`) resolve
-credentials with the same pattern in their `_helpers.tpl`:
+Top-level keys `postgres`, `bootstrap`, `api`, `ingestion` configure inline
+templates (guarded by `<component>.enabled`). External deps use the same keys
+for subchart values.
 
-```text
-coalesce(.Values.<local>, .Values.global.<same>)
-```
-
-| Field | Subchart-local path | Global fallback | Used by |
-|-------|---------------------|-----------------|---------|
-| Postgres password | `postgres.password` | `global.postgres.password` | postgres, bootstrap, api, ingestion |
-| Postgres user | `postgres.user` / `postgres.username` | `global.postgres.user` | all above |
-| Postgres host | `postgres.host` | `global.postgres.host` | bootstrap, api, ingestion |
-| Neo4j password | `neo4j.password` | `global.neo4j.password` | bootstrap, api, ingestion |
-| Neo4j host | `neo4j.host` | `global.neo4j.host` | bootstrap, api, ingestion |
-| App image | `image` (full ref) | `global.registry` + `global.images.app` + `global.imageTag` | bootstrap, api, ingestion |
-| Postgres image | `image` (full ref) | `global.registry` + `global.images.postgres` + `global.imageTag` | postgres |
-
-**Recommended:** set passwords once under `global.postgres.password` and
-`global.neo4j.password`. Subchart-local `postgres.password` / `neo4j.password`
-still work for per-component overrides.
+| Parent key | Renders | `enabled` guard |
+|------------|---------|-----------------|
+| `postgres` | Inline StatefulSet, Services, SCC | `postgres.enabled` |
+| `bootstrap` | Inline schema Job (hook) | `bootstrap.enabled` |
+| `api` | Inline Deployment, Service, Route | `api.enabled` |
+| `ingestion` | Inline CronJob + hook Job | `ingestion.enabled` |
+| `neo4j` | External subchart | `neo4j.enabled` |
+| `llama-stack` | External subchart | `llama-stack.enabled` |
+| `llm-service` | External subchart | `llm-service.enabled` |
 
 ---
 
-## Umbrella-only templates
+## Model providers
 
-These resources are rendered by the **parent** chart (not a subchart) and read
-umbrella-level `.Values`:
-
-| Template | Reads | Creates |
-|----------|-------|---------|
-| [`neo4j-auth-secret.yaml`](deploy/helm/general-simulation/templates/neo4j-auth-secret.yaml) | `global.neo4j.password` | Secret `neo4j-auth` for official Neo4j chart |
-| [`llamastack-pg-secret.yaml`](deploy/helm/general-simulation/templates/llamastack-pg-secret.yaml) | `global.postgres.*`, `postgres.postgres.*` | Secret `pgvector` for Llama Stack |
-| [`neo4j-serviceaccount.yaml`](deploy/helm/general-simulation/templates/neo4j-serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA |
-| [`neo4j-scc-binding.yaml`](deploy/helm/general-simulation/templates/neo4j-scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC binding |
-
----
-
-## LLM modes (`llm.mode`)
-
-`llm.mode` in [`helm/values.yaml`](helm/values.yaml) is a **documentation
-convention** for humans and `make deploy`; no umbrella template branches on it
-directly. Mode is implemented by **which overlay file and keys are enabled**:
-
-| Mode | Overlay file | `llm-service.enabled` | Active `global.models` provider | `api.models.generation` |
-|------|--------------|----------------------|--------------------------------|-------------------------|
-| `maas` | *(none)* | `false` | `external-model` | `external-model/llama-scout-17b` |
-| `openai` | `values-openai.yaml` | `false` | `openai` | `openai/gpt-4o-mini` |
-| `local` | `values-local.yaml` | `true` | `deepseek-r1-distill-qwen-1-5b` | `deepseek-r1-distill-qwen-1-5b/deepseek-ai/...` |
+Enable providers in `global.models.<key>.enabled`. Point
+`api.models.generation` at `<providerKey>/<model.id>`. Most api/bootstrap/postgres
+settings default in `templates/_helpers.tpl` (see `values-full.yaml`).
 
 ### Inference path (always via Llama Stack)
 
 ```text
 api / ingestion  →  http://llamastack:8321/v1  →  upstream provider
-                     (api.llm.baseUrl)            (global.models.* in llama-stack)
 ```
 
-| Consumer key | Subchart | Runtime env / secret |
-|--------------|----------|----------------------|
-| `api.llm.baseUrl` | `api` | `LLM_BASE_URL` in ConfigMap |
-| `api.models.generation` | `api` | `GENERATION_MODEL_ID` |
-| `api.models.embedding` | `api` | `EMBEDDING_MODEL_ID` |
-| `ingestion.models.*` | `ingestion` | same pattern in CronJob / hook Job |
-| `global.models.*` | `llama-stack` | provider registration + tokens |
+### Embeddings (inline sentence-transformers)
+
+Embeddings run inside the Llama Stack pod via the built-in
+`sentence-transformers` provider. The umbrella chart overrides subchart
+`run-config` to register the embedding model for `/v1/embeddings` (the
+subchart alone only sets the vector-store default).
+
+| Role | `api.models.*` | Provider |
+|------|----------------|----------|
+| Chat | `generation: external-model/llama-scout-17b` | `external-model` (MaaS) |
+| Embed | `embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5` | `sentence-transformers` (inline) |
+
+Set `url` explicitly for every remote chat provider. Without `url`, the chart
+defaults to in-cluster `http://<key>-vllm.<namespace>.svc.cluster.local/v1`.
 
 ---
 
-## Subchart reference
+## Umbrella-only templates
 
-### `postgres`
-
-| Consumer / parent key | Subchart `.Values` | Kubernetes output |
-|-----------------------|-------------------|-------------------|
-| `postgres.enabled` | `enabled` | Install toggle |
-| `global.postgres.password` | via helper | Secret `postgres-credentials` |
-| `global.images.postgres` | via helper | StatefulSet image |
-| `postgres.storage.size` | `storage.size` | PVC size |
-
-### `neo4j` (official chart)
-
-| Consumer / parent key | Effect |
-|-----------------------|--------|
-| `neo4j.enabled` | Install toggle |
-| `neo4j.fullnameOverride: neo4j` | Service name `neo4j` |
-| `neo4j.neo4j.passwordFromSecret: neo4j-auth` | Uses umbrella-created secret |
-| `global.neo4j.password` | Umbrella → `neo4j-auth` Secret |
-
-### `bootstrap`
-
-| Consumer / parent key | Subchart `.Values` | Effect |
-|-----------------------|-------------------|--------|
-| `bootstrap.enabled` | `enabled` | Install toggle |
-| `bootstrap.waitFor.*` | `waitFor.*` | Init container TCP wait |
-| `global.postgres.*`, `global.neo4j.*` | via helpers | `POSTGRES_DSN`, `NEO4J_*` env |
-| `global.images.app` | via helper | `bootstrap-schema` image |
-
-Helm hook: `post-install`, `post-upgrade` (schema Job).
-
-### `llama-stack` (external)
-
-| Consumer / parent key | Effect |
-|-----------------------|--------|
-| `"llama-stack".enabled` | Install toggle |
-| `"llama-stack".rawDeploymentMode` | Deployment style |
-| `"llama-stack".pgvector.enabled` | Umbrella creates `pgvector` Secret |
-| `global.models` | Provider config passed through `global` |
-
-### `llm-service` (external, local mode only)
-
-| Consumer / parent key | Effect |
-|-----------------------|--------|
-| `llm-service.enabled` | Install toggle |
-| `llm-service.secret.hf_token` | Hugging Face token |
-| `llm-service.models.*` | vLLM model spec |
-| `global.models.deepseek-r1-distill-qwen-1-5b` | Must align with Stack provider key |
-
-### `api`
-
-| Consumer / parent key | Subchart `.Values` | Runtime |
-|-----------------------|-------------------|---------|
-| `api.enabled` | `enabled` | Install toggle |
-| `api.route.enabled` | `route.enabled` | OpenShift Route `general-sim-api` |
-| `api.models.generation` | `models.generation` | `GENERATION_MODEL_ID` |
-| `api.waitFor.*` | `waitFor.*` | Init wait + startup probe budget |
-| `global.postgres.*`, `global.neo4j.*` | via helpers | Secret `app-secrets` |
-
-### `ingestion`
-
-| Consumer / parent key | Subchart `.Values` | Runtime |
-|-----------------------|-------------------|---------|
-| `ingestion.enabled` | `enabled` | CronJob install toggle |
-| `ingestion.schedule` | `schedule` | Cron schedule (`*/10 * * * *`) |
-| `ingestion.runOnDeploy.enabled` | `runOnDeploy.enabled` | Hook Job on install/upgrade |
-| `ingestion.adapterId` | `adapterId` | `--adapter` CLI arg |
-| `ingestion.models.generation` | `models.generation` | Container env |
-| `global.postgres.*`, `global.neo4j.*` | via helpers | Job / CronJob env |
-
-Hook Job `general-sim-ingestion-initial` runs at `hook-weight: 10` (after
-bootstrap at weight `0`).
+| Template | Reads | Creates |
+|----------|-------|---------|
+| [`neo4j-auth-secret.yaml`](helm/templates/neo4j-auth-secret.yaml) | `global.neo4j.password` | Secret `neo4j-auth` |
+| [`llamastack-pg-secret.yaml`](helm/templates/llamastack-pg-secret.yaml) | `global.postgres.*` | Secret `pgvector` |
+| [`llamastack-run-config.yaml`](helm/templates/llamastack-run-config.yaml) | `api.models.embedding`, `global.models.*` | ConfigMap `general-sim-llamastack-config` (mounted by llama-stack) |
+| [`neo4j-serviceaccount.yaml`](helm/templates/neo4j-serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA |
+| [`neo4j-scc-binding.yaml`](helm/templates/neo4j-scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC binding |
 
 ---
 
-## Consuming `general-simulation` as a parent subchart
+## Consuming as a parent subchart
 
-When another application depends on this chart, values are nested under the
-dependency **name** (`general-simulation`):
-
-```yaml
-# parent-app/Chart.yaml
-dependencies:
-  - name: general-simulation
-    version: 0.0.1
-    repository: https://robertsandoval.github.io/general-simulation
-    condition: general-simulation.enabled
-
-# parent-app/values.yaml
-general-simulation:
-  enabled: true
-
-  global:
-    postgres:
-      password: "from-parent-vault"
-    neo4j:
-      password: "from-parent-vault"
-    models:
-      external-model:
-        apiToken: "from-parent-vault"
-
-  api:
-    enabled: true
-    route:
-      enabled: false    # parent exposes its own ingress
-
-  ingestion:
-    enabled: true
-```
-
-Everything under `general-simulation:` follows the same routing rules as
-standalone `helm/values.yaml`, but prefixed one level.
-
-Cross-namespace clients call the API at:
-
-```text
-http://general-sim-api.<release-namespace>.svc:8000
-```
-
----
-
-## Common overrides
-
-### Post-deploy smoke test (UK airspace closure)
-
-```bash
-SEED_MODE=cluster NAMESPACE=general-simulation make smoke-test
-```
-
-### Skip immediate ingestion on deploy
-
-```yaml
-ingestion:
-  runOnDeploy:
-    enabled: false
-```
-
-### Kind / plain Kubernetes (no OpenShift Routes)
-
-```yaml
-openshift:
-  neo4j:
-    scc:
-      enabled: false
-api:
-  route:
-    enabled: false
-```
-
-### Custom image registry
-
-```yaml
-global:
-  registry: quay.io/my-org
-  imageTag: v1.2.3
-  images:
-    app: my-general-sim-api
-    postgres: my-general-sim-postgres
-```
-
-Or via make: `make deploy REGISTRY=quay.io/my-org TAG=v1.2.3`.
+Nest values under `general-simulation:` — same routing as standalone
+`helm/values.yaml`.
 
 ---
 
 ## Debugging values
 
 ```bash
-# Effective values after install
 helm get values general-simulation -n general-simulation
 
-# Render a subchart template with consumer files
-helm template test ./deploy/helm/general-simulation \
-  -f helm/values.yaml \
+helm template test ./helm \
   -f helm/values-secrets.yaml \
-  --show-only charts/api/templates/configmap.yaml
-
-# See what a subchart receives (Helm 3)
-helm template test ./deploy/helm/general-simulation \
-  -f helm/values.yaml \
-  --show-only charts/api/templates/deployment.yaml
+  --show-only templates/api/configmap.yaml
 ```
 
 ---
@@ -457,7 +193,6 @@ helm template test ./deploy/helm/general-simulation \
 
 | Doc | Contents |
 |-----|----------|
-| [`helm/README.md`](helm/README.md) | Quick start, secret files, LLM modes |
-| [`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md) | Umbrella install, component toggles, publishing |
-| [`frontend_ui/README.md`](frontend_ui/README.md) | Simulation Console (WIP; not shipped in API image) |
-| [`Makefile`](Makefile) | `make deploy`, per-component targets, image vars |
+| [`helm/README.md`](helm/README.md) | Quick start, model providers, secrets |
+| [`Makefile`](Makefile) | `make deploy`, per-component targets |
+| [`README.md`](README.md) | Full OpenShift deployment guide |

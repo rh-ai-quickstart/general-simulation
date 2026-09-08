@@ -218,7 +218,7 @@ ENABLED_DOMAINS=shipping
 Helm:
 
 ```yaml
-# deploy/helm/api/values.yaml and deploy/helm/ingestion/values.yaml
+# helm/values.yaml — api.enabledDomains and ingestion.adapterId / enabledDomains
 enabledDomains: aviation,shipping
 adapterId: opensky_flights   # which adapter this CronJob runs
 ```
@@ -391,7 +391,7 @@ Set `ENABLED_DOMAINS` (or Helm `enabledDomains`) so the domain package loads,
 and set the CronJob `adapterId` to the adapter this job should run:
 
 ```yaml
-# deploy/helm/ingestion/values.yaml
+# helm/ingestion/values.yaml
 enabledDomains: aviation
 adapterId: opensky_flights
 ```
@@ -399,7 +399,7 @@ adapterId: opensky_flights
 For a second adapter on a different schedule, add another CronJob (or Helm
 release) with the same `enabledDomains` and a different `adapterId`.
 
-Helm values (`deploy/helm/api/values.yaml` `enabledDomains`, ingestion chart
+Helm values (`helm/values.yaml` under `api:` and `ingestion:`, e.g. `enabledDomains`,
 `adapterId`) carry `ENABLED_DOMAINS` for deployed workloads.
 
 ---
@@ -418,7 +418,7 @@ New domain = these files only:
   UPDATE  tests/test_registry.py                      ← assert catalog entry
   SET     ENABLED_DOMAINS=<name>                      ← .env / Helm / ConfigMap
   CREATE  domain/<name>/solver.py                     ← (optional) real solver
-  UPDATE  deploy/helm/ingestion/values.yaml           ← adapterId + enabledDomains
+  UPDATE  helm/values.yaml (ingestion.adapterId + ingestion.enabledDomains)
 ```
 
 Cursor paste-prompts for the same checklist:
