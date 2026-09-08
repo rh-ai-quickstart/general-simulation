@@ -64,7 +64,7 @@ LOCAL_MODEL_ID   ?= deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
         build build-postgres build-app \
         deploy deploy-umbrella neo4j-connect \
         package-chart \
-        undeploy status lint-charts \
+        undeploy status lint-charts test-unit smoke-test \
         _guard-values-secrets \
         _guard-oc _guard-helm _guard-podman \
         _remove-orphan-neo4j-resources _remove-openshift-routes
@@ -83,6 +83,7 @@ help:
 	@printf "  %-40s %s\n" "undeploy" "Uninstall Helm releases"
 	@printf "  %-40s %s\n" "status" "helm list + oc get pods"
 	@printf "  %-40s %s\n" "lint-charts" "helm lint"
+	@printf "  %-40s %s\n" "test-unit" "Run unit tests (uv run pytest)"
 	@printf "  %-40s %s\n" "smoke-test" "Seed UK demo + POST /query (auto cluster when deployed)"
 	@printf "\nVariables:\n"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
@@ -267,6 +268,9 @@ lint-charts: _guard-helm
 	helm dependency update $(CHART_UMBRELLA)
 	helm lint $(CHART_UMBRELLA)
 	@echo "==> Chart passed lint."
+
+test-unit:
+	uv run pytest
 
 smoke-test:
 	@chmod +x scripts/smoke-uk-closure.sh

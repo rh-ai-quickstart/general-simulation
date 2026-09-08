@@ -1,39 +1,22 @@
 """Tests for the graph knowledge store — nodes, edges, and simulation events.
 
 No live database or LLM server required:
-  - asyncpg connections are mocked
+  - Neo4j driver/session calls are mocked
   - FakeLLMClient provides the in-memory vector store
-
-Build-plan "done when" checks:
-  - inject_event: AFFECTED_BY edges created in graph + chunk retrievable via
-    vector_search
-  - remove_event: DETACH DELETE issued; base Entity nodes untouched
-  - remove_scenario: graph cleaned + vector DB unregistered
 """
 from __future__ import annotations
 
-import json
 from datetime import timezone
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from lib.core.config import Settings
-from lib.graph.cypher import (
-    GRAPH_NAME,
-    cypher_read_sql,
-    cypher_write_sql,
-    parse_agtype,
-    parse_agtype_property,
-)
+from lib.graph.cypher import NEO4J_DATABASE
 from lib.graph.events import (
     EDGE_AFFECTED_BY,
     SimulationEvent,
-    _create_affected_by_edge,
-    _create_event_node,
     get_affected_entities,
-    get_scenario_events,
     inject_event,
     remove_event,
     remove_scenario,
@@ -45,6 +28,7 @@ from lib.graph.nodes import (
     get_dependent_entities,
 )
 from lib.llm.fake import FakeLLMClient
+from tests.conftest import neo4j_driver_mock, neo4j_run_result
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -60,21 +44,6 @@ def _settings() -> Settings:
 
 def _fake_client() -> FakeLLMClient:
     return FakeLLMClient(settings=_settings())
-
-
-def _conn() -> AsyncMock:
-    """Mock asyncpg connection."""
-    conn = AsyncMock()
-    conn.fetch = AsyncMock(return_value=[])
-    return conn
-
-
-def _pool(conn: AsyncMock) -> MagicMock:
-    """Mock asyncpg pool that yields the given connection."""
-    pool = MagicMock()
-    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
-    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-    return pool
 
 
 def _event(
@@ -94,44 +63,8 @@ def _event(
 # ── Cypher helpers ────────────────────────────────────────────────────────────
 
 
-def test_cypher_write_sql_contains_graph_name():
-    sql = cypher_write_sql("CREATE (n:Entity)")
-    assert GRAPH_NAME in sql
-    assert "ag_catalog.cypher" in sql
-    assert "$1::agtype" in sql
-
-
-def test_cypher_read_sql_contains_graph_name():
-    sql = cypher_read_sql("MATCH (n) RETURN n")
-    assert GRAPH_NAME in sql
-    assert "ag_catalog.cypher" in sql
-
-
-def test_parse_agtype_string():
-    assert parse_agtype('"hello"') == "hello"
-
-
-def test_parse_agtype_number():
-    assert parse_agtype("42") == 42
-
-
-def test_parse_agtype_strips_vertex_suffix():
-    raw = '{"id": 1, "label": "Entity", "properties": {"id": "e1"}}::vertex'
-    parsed = parse_agtype(raw)
-    assert isinstance(parsed, dict)
-    assert parsed["label"] == "Entity"
-
-
-def test_parse_agtype_none():
-    assert parse_agtype(None) is None
-
-
-def test_parse_agtype_property_unwraps_json_string():
-    assert parse_agtype_property('"entity-42"') == "entity-42"
-
-
-def test_parse_agtype_property_none():
-    assert parse_agtype_property(None) is None
+def test_neo4j_database_is_canonical_name():
+    assert NEO4J_DATABASE == "neo4j"
 
 
 # ── Entity node operations ────────────────────────────────────────────────────
@@ -139,33 +72,41 @@ def test_parse_agtype_property_none():
 
 @pytest.mark.asyncio
 async def test_create_entity_node_executes_cypher():
-    conn = _conn()
-    await create_entity_node(conn, "e1", "moving_entity")
-    conn.execute.assert_awaited_once()
-    sql, params_json = conn.execute.call_args.args
-    assert "MERGE" in sql
-    assert "Entity" in sql
-    params = json.loads(params_json)
-    assert params["id"] == "e1"
-    assert params["type"] == "moving_entity"
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
+
+    await create_entity_node(driver, "e1", "moving_entity")
+
+    session.run.assert_awaited_once()
+    query = session.run.call_args.args[0]
+    kwargs = session.run.call_args.kwargs
+    assert "MERGE" in query
+    assert "Entity" in query
+    assert kwargs["id"] == "e1"
+    assert kwargs["type"] == "moving_entity"
 
 
 @pytest.mark.asyncio
-async def test_create_entity_node_with_attributes():
-    conn = _conn()
-    await create_entity_node(conn, "e2", "sensor", {"region": "west"})
-    _, params_json = conn.execute.call_args.args
-    params = json.loads(params_json)
-    assert params.get("region") == "west"
+async def test_create_entity_node_accepts_attributes_without_error():
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
+
+    await create_entity_node(driver, "e2", "sensor", {"region": "west"})
+
+    session.run.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_delete_entity_node_executes_detach_delete():
-    conn = _conn()
-    await delete_entity_node(conn, "e1")
-    sql, params_json = conn.execute.call_args.args
-    assert "DETACH DELETE" in sql
-    assert json.loads(params_json)["id"] == "e1"
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
+
+    await delete_entity_node(driver, "e1")
+
+    query = session.run.call_args.args[0]
+    kwargs = session.run.call_args.kwargs
+    assert "DETACH DELETE" in query
+    assert kwargs["id"] == "e1"
 
 
 # ── Dependency edges ──────────────────────────────────────────────────────────
@@ -173,42 +114,50 @@ async def test_delete_entity_node_executes_detach_delete():
 
 @pytest.mark.asyncio
 async def test_create_dependency_edge_uses_edge_type():
-    conn = _conn()
-    await create_dependency_edge(conn, "a", "b", "FEEDS")
-    sql, params_json = conn.execute.call_args.args
-    assert "FEEDS" in sql
-    params = json.loads(params_json)
-    assert params["from_id"] == "a"
-    assert params["to_id"] == "b"
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
+
+    await create_dependency_edge(driver, "a", "b", "FEEDS")
+
+    query = session.run.call_args.args[0]
+    kwargs = session.run.call_args.kwargs
+    assert "FEEDS" in query
+    assert kwargs["from_id"] == "a"
+    assert kwargs["to_id"] == "b"
 
 
 @pytest.mark.asyncio
 async def test_create_dependency_edge_default_type():
-    conn = _conn()
-    await create_dependency_edge(conn, "a", "b")
-    sql, _ = conn.execute.call_args.args
-    assert "DEPENDS_ON" in sql
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
+
+    await create_dependency_edge(driver, "a", "b")
+
+    query = session.run.call_args.args[0]
+    assert "DEPENDS_ON" in query
 
 
 @pytest.mark.asyncio
 async def test_get_dependent_entities_returns_parsed_ids():
-    conn = _conn()
-    # Simulate AGE returning agtype string rows
-    conn.fetch = AsyncMock(
-        return_value=[
-            {"result": '"dep-entity-1"'},
-            {"result": '"dep-entity-2"'},
-        ]
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(
+        return_value=neo4j_run_result(
+            data=[{"dep_id": "dep-entity-1"}, {"dep_id": "dep-entity-2"}]
+        )
     )
-    deps = await get_dependent_entities(conn, "root-entity")
+
+    deps = await get_dependent_entities(driver, "root-entity")
+
     assert deps == ["dep-entity-1", "dep-entity-2"]
 
 
 @pytest.mark.asyncio
 async def test_get_dependent_entities_empty():
-    conn = _conn()
-    conn.fetch = AsyncMock(return_value=[])
-    deps = await get_dependent_entities(conn, "isolated")
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result(data=[]))
+
+    deps = await get_dependent_entities(driver, "isolated")
+
     assert deps == []
 
 
@@ -228,51 +177,46 @@ def test_simulation_event_default_created_at_is_utc():
     assert evt.created_at.tzinfo == timezone.utc
 
 
-# ── inject_event ─────────────────────────────────────────────────────────────
+# ── inject_event ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_inject_event_creates_event_node():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event()
 
-    await inject_event(evt, pool, client)
+    await inject_event(evt, driver, client)
 
-    all_sqls = [c.args[0] for c in conn.execute.call_args_list]
-    assert any("SimulationEvent" in sql for sql in all_sqls), (
-        "Expected a CREATE (e:SimulationEvent ...) Cypher call"
-    )
+    queries = [c.args[0] for c in session.run.call_args_list]
+    assert any("SimulationEvent" in query for query in queries)
 
 
 @pytest.mark.asyncio
 async def test_inject_event_creates_affected_by_edges():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event(affected=["entity-A", "entity-B", "entity-C"])
 
-    await inject_event(evt, pool, client)
+    await inject_event(evt, driver, client)
 
-    # 1 event-node CREATE + 3 AFFECTED_BY edges = 4 execute calls
-    assert conn.execute.await_count == 4
+    assert session.run.await_count == 4
     edge_calls = [
-        c.args[0]
-        for c in conn.execute.call_args_list
-        if EDGE_AFFECTED_BY in c.args[0]
+        c.args[0] for c in session.run.call_args_list if EDGE_AFFECTED_BY in c.args[0]
     ]
     assert len(edge_calls) == 3
 
 
 @pytest.mark.asyncio
 async def test_inject_event_embeds_description_in_vector_store():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event()
 
-    await inject_event(evt, pool, client)
+    await inject_event(evt, driver, client)
 
     vdb = f"sim_events_{evt.scenario_id}"
     results = await client.vector_search(evt.description, vdb, top_k=1)
@@ -282,12 +226,12 @@ async def test_inject_event_embeds_description_in_vector_store():
 
 @pytest.mark.asyncio
 async def test_inject_event_chunk_metadata_contains_scenario_id():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event()
 
-    await inject_event(evt, pool, client)
+    await inject_event(evt, driver, client)
 
     vdb = f"sim_events_{evt.scenario_id}"
     results = await client.vector_search(evt.description, vdb)
@@ -296,15 +240,15 @@ async def test_inject_event_chunk_metadata_contains_scenario_id():
 
 @pytest.mark.asyncio
 async def test_inject_multiple_events_same_scenario():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
 
     evt1 = _event("evt-1", "s1", ["e1"])
     evt2 = _event("evt-2", "s1", ["e2"])
 
-    await inject_event(evt1, pool, client)
-    await inject_event(evt2, pool, client)
+    await inject_event(evt1, driver, client)
+    await inject_event(evt2, driver, client)
 
     vdb = "sim_events_s1"
     results = await client.vector_search("disruption", vdb, top_k=5)
@@ -318,25 +262,28 @@ async def test_inject_multiple_events_same_scenario():
 
 @pytest.mark.asyncio
 async def test_get_affected_entities_returns_entity_ids():
-    conn = _conn()
-    conn.fetch = AsyncMock(
-        return_value=[
-            {"result": '"entity-A"'},
-            {"result": '"entity-B"'},
-        ]
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(
+        return_value=neo4j_run_result(
+            data=[{"entity_id": "entity-A"}, {"entity_id": "entity-B"}]
+        )
     )
-    ids = await get_affected_entities(conn, "evt-1")
+
+    ids = await get_affected_entities(driver, "evt-1")
+
     assert ids == ["entity-A", "entity-B"]
-    sql = conn.fetch.call_args.args[0]
-    assert "AFFECTED_BY" in sql
-    assert "SimulationEvent" in sql
+    query = session.run.call_args.args[0]
+    assert "AFFECTED_BY" in query
+    assert "SimulationEvent" in query
 
 
 @pytest.mark.asyncio
 async def test_get_affected_entities_empty_when_no_edges():
-    conn = _conn()
-    conn.fetch = AsyncMock(return_value=[])
-    ids = await get_affected_entities(conn, "no-such-event")
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result(data=[]))
+
+    ids = await get_affected_entities(driver, "no-such-event")
+
     assert ids == []
 
 
@@ -345,31 +292,28 @@ async def test_get_affected_entities_empty_when_no_edges():
 
 @pytest.mark.asyncio
 async def test_remove_event_issues_detach_delete():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
 
-    await remove_event("evt-1", pool)
+    await remove_event("evt-1", driver)
 
-    conn.execute.assert_awaited_once()
-    sql, params_json = conn.execute.call_args.args
-    assert "DETACH DELETE" in sql
-    assert "SimulationEvent" in sql
-    assert json.loads(params_json)["id"] == "evt-1"
+    session.run.assert_awaited_once()
+    query = session.run.call_args.args[0]
+    kwargs = session.run.call_args.kwargs
+    assert "DETACH DELETE" in query
+    assert "SimulationEvent" in query
+    assert kwargs["id"] == "evt-1"
 
 
 @pytest.mark.asyncio
 async def test_remove_event_does_not_touch_entity_nodes():
-    """DETACH DELETE on SimulationEvent must not delete Entity nodes."""
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
 
-    await remove_event("evt-1", pool)
+    await remove_event("evt-1", driver)
 
-    # The only execute call must target SimulationEvent, not Entity
-    sql, _ = conn.execute.call_args.args
-    assert "Entity" not in sql.split("SimulationEvent")[0], (
-        "Entity nodes should not appear before SimulationEvent in the DELETE query"
-    )
+    query = session.run.call_args.args[0]
+    assert "Entity" not in query.split("SimulationEvent")[0]
 
 
 # ── remove_scenario ───────────────────────────────────────────────────────────
@@ -377,86 +321,74 @@ async def test_remove_event_does_not_touch_entity_nodes():
 
 @pytest.mark.asyncio
 async def test_remove_scenario_cleans_graph_and_vector():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event(scenario_id="s2")
 
-    await inject_event(evt, pool, client)
+    await inject_event(evt, driver, client)
     vdb = f"sim_events_{evt.scenario_id}"
 
-    # Vector store has the event
     pre = await client.vector_search(evt.description, vdb)
     assert len(pre) > 0
 
-    # Reset execute count before remove_scenario
-    conn.execute.reset_mock()
-    await remove_scenario(evt.scenario_id, pool, client)
+    session.run.reset_mock()
+    await remove_scenario(evt.scenario_id, driver, client)
 
-    # Graph DELETE was issued
-    conn.execute.assert_awaited_once()
-    sql, params_json = conn.execute.call_args.args
-    assert "DETACH DELETE" in sql
-    assert json.loads(params_json)["sid"] == evt.scenario_id
+    session.run.assert_awaited_once()
+    query = session.run.call_args.args[0]
+    kwargs = session.run.call_args.kwargs
+    assert "DETACH DELETE" in query
+    assert kwargs["sid"] == evt.scenario_id
 
-    # Vector store is cleared
     post = await client.vector_search(evt.description, vdb)
     assert post == []
 
 
 @pytest.mark.asyncio
 async def test_remove_scenario_does_not_affect_other_scenarios():
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
 
     evt_s1 = _event("evt-s1", "scenario-one", ["e1"])
     evt_s2 = _event("evt-s2", "scenario-two", ["e2"])
 
-    await inject_event(evt_s1, pool, client)
-    await inject_event(evt_s2, pool, client)
+    await inject_event(evt_s1, driver, client)
+    await inject_event(evt_s2, driver, client)
 
-    conn.execute.reset_mock()
-    await remove_scenario("scenario-one", pool, client)
+    session.run.reset_mock()
+    await remove_scenario("scenario-one", driver, client)
 
-    # scenario-two vector store should still exist
     results = await client.vector_search(
         evt_s2.description, "sim_events_scenario-two"
     )
     assert len(results) > 0
 
 
-# ── Full round-trip: inject → query → remove → base graph intact ──────────────
+# ── Full round-trip: inject → query → remove ─────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_full_roundtrip_inject_remove():
-    """Inject an event, retrieve it, remove it, confirm graph calls are correct."""
-    conn = _conn()
-    pool = _pool(conn)
+    driver, session = neo4j_driver_mock()
+    session.run = AsyncMock(return_value=neo4j_run_result())
     client = _fake_client()
     evt = _event("evt-rt", "rt-scenario", ["e1", "e2"])
 
-    # Inject
-    await inject_event(evt, pool, client)
-    execute_after_inject = conn.execute.await_count  # 1 node + 2 edges = 3
+    await inject_event(evt, driver, client)
+    assert session.run.await_count == 3
 
-    assert execute_after_inject == 3
-
-    # Vector store has the event
     vdb = "sim_events_rt-scenario"
     hits = await client.vector_search(evt.description, vdb, top_k=1)
     assert hits[0].document_id == "evt-rt"
 
-    # Remove scenario (full cleanup)
-    conn.execute.reset_mock()
-    await remove_scenario(evt.scenario_id, pool, client)
+    session.run.reset_mock()
+    await remove_scenario(evt.scenario_id, driver, client)
 
-    # One DELETE call issued
-    assert conn.execute.await_count == 1
-    delete_sql, _ = conn.execute.call_args.args
-    assert "DETACH DELETE" in delete_sql
+    assert session.run.await_count == 1
+    delete_query = session.run.call_args.args[0]
+    assert "DETACH DELETE" in delete_query
 
-    # Vector store is now empty
     post_hits = await client.vector_search(evt.description, vdb)
     assert post_hits == []

@@ -1,25 +1,28 @@
 """Smoke tests for the schema bootstrap.
 
-All Postgres I/O is mocked — no live database required.
+All database I/O is mocked — no live Postgres or Neo4j required.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from lib.graph.bootstrap import (
-    AGE_GRAPH_NAME,
     _EXTENSION_STATEMENTS,
+    _NEO4J_CONSTRAINTS,
+    _NEO4J_INDEXES,
     _TABLE_STATEMENTS,
     bootstrap,
+    bootstrap_neo4j,
+    bootstrap_postgres,
 )
+from tests.conftest import neo4j_driver_mock
 
 
 def _make_conn_mock() -> AsyncMock:
     """Return an AsyncMock that acts like an asyncpg.Connection."""
     conn = AsyncMock()
-    # Make conn.transaction() a sync context manager returning an AsyncMock
     tx = AsyncMock()
     tx.__aenter__ = AsyncMock(return_value=tx)
     tx.__aexit__ = AsyncMock(return_value=False)
@@ -28,10 +31,10 @@ def _make_conn_mock() -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_calls_all_extension_statements():
+async def test_bootstrap_postgres_calls_all_extension_statements():
     conn = _make_conn_mock()
     with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
-        await bootstrap("postgresql://mock:mock@localhost/mock")
+        await bootstrap_postgres("postgresql://mock:mock@localhost/mock")
 
     executed = [c.args[0].strip() for c in conn.execute.call_args_list]
 
@@ -40,31 +43,10 @@ async def test_bootstrap_calls_all_extension_statements():
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_sets_search_path_before_age_graph():
+async def test_bootstrap_postgres_creates_all_tables():
     conn = _make_conn_mock()
     with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
-        await bootstrap("postgresql://mock:mock@localhost/mock")
-
-    executed = [c.args[0].strip() for c in conn.execute.call_args_list]
-
-    search_path_idx = next(
-        i for i, s in enumerate(executed)
-        if "search_path" in s and "ag_catalog" in s
-    )
-    age_graph_idx = next(
-        i for i, s in enumerate(executed)
-        if AGE_GRAPH_NAME in s
-    )
-    assert search_path_idx < age_graph_idx, (
-        "search_path must be set before AGE graph creation"
-    )
-
-
-@pytest.mark.asyncio
-async def test_bootstrap_creates_all_tables():
-    conn = _make_conn_mock()
-    with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
-        await bootstrap("postgresql://mock:mock@localhost/mock")
+        await bootstrap_postgres("postgresql://mock:mock@localhost/mock")
 
     executed = "\n".join(c.args[0] for c in conn.execute.call_args_list)
 
@@ -73,10 +55,10 @@ async def test_bootstrap_creates_all_tables():
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_creates_indexes():
+async def test_bootstrap_postgres_creates_indexes():
     conn = _make_conn_mock()
     with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
-        await bootstrap("postgresql://mock:mock@localhost/mock")
+        await bootstrap_postgres("postgresql://mock:mock@localhost/mock")
 
     executed = "\n".join(c.args[0] for c in conn.execute.call_args_list)
 
@@ -87,36 +69,45 @@ async def test_bootstrap_creates_indexes():
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_closes_connection_on_success():
+async def test_bootstrap_postgres_closes_connection_on_success():
     conn = _make_conn_mock()
     with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
-        await bootstrap("postgresql://mock:mock@localhost/mock")
+        await bootstrap_postgres("postgresql://mock:mock@localhost/mock")
 
     conn.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_closes_connection_on_error():
+async def test_bootstrap_postgres_closes_connection_on_error():
     conn = _make_conn_mock()
     conn.execute.side_effect = [None, RuntimeError("db error")]
 
     with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
         with pytest.raises(RuntimeError, match="db error"):
-            await bootstrap("postgresql://mock:mock@localhost/mock")
+            await bootstrap_postgres("postgresql://mock:mock@localhost/mock")
 
     conn.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_create_pool_sets_search_path():
-    """create_pool init callback sets search_path for every connection."""
-    from lib.core.config import Settings
-    from lib.core.db import _init_connection
+async def test_bootstrap_neo4j_runs_constraints_and_indexes():
+    driver, session = neo4j_driver_mock()
 
-    conn = AsyncMock()
-    await _init_connection(conn)
+    await bootstrap_neo4j(driver)
 
-    conn.execute.assert_awaited_once()
-    executed = conn.execute.call_args.args[0]
-    assert "ag_catalog" in executed
-    assert "search_path" in executed
+    executed = [c.args[0] for c in session.run.call_args_list]
+    for stmt in _NEO4J_CONSTRAINTS + _NEO4J_INDEXES:
+        assert stmt in executed
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_calls_postgres_and_neo4j():
+    conn = _make_conn_mock()
+    driver, session = neo4j_driver_mock()
+
+    with patch("asyncpg.connect", new_callable=AsyncMock, return_value=conn):
+        await bootstrap("postgresql://mock:mock@localhost/mock", driver)
+
+    assert conn.execute.await_count > 0
+    assert session.run.await_count == len(_NEO4J_CONSTRAINTS) + len(_NEO4J_INDEXES)
+    conn.close.assert_awaited_once()
