@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from src.graph.bootstrap import (
+from lib.graph.bootstrap import (
     AGE_GRAPH_NAME,
     _EXTENSION_STATEMENTS,
     _TABLE_STATEMENTS,
@@ -110,8 +110,8 @@ async def test_bootstrap_closes_connection_on_error():
 @pytest.mark.asyncio
 async def test_create_pool_sets_search_path():
     """create_pool init callback sets search_path for every connection."""
-    from src.core.config import Settings
-    from src.core.db import _init_connection
+    from lib.core.config import Settings
+    from lib.core.db import _init_connection
 
     conn = AsyncMock()
     await _init_connection(conn)

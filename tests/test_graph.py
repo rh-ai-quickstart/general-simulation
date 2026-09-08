@@ -19,15 +19,15 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from src.core.config import Settings
-from src.graph.cypher import (
+from lib.core.config import Settings
+from lib.graph.cypher import (
     GRAPH_NAME,
     cypher_read_sql,
     cypher_write_sql,
     parse_agtype,
     parse_agtype_property,
 )
-from src.graph.events import (
+from lib.graph.events import (
     EDGE_AFFECTED_BY,
     SimulationEvent,
     _create_affected_by_edge,
@@ -38,13 +38,13 @@ from src.graph.events import (
     remove_event,
     remove_scenario,
 )
-from src.graph.nodes import (
+from lib.graph.nodes import (
     create_dependency_edge,
     create_entity_node,
     delete_entity_node,
     get_dependent_entities,
 )
-from src.llm.fake import FakeLLMClient
+from lib.llm.fake import FakeLLMClient
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

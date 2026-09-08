@@ -1,7 +1,0 @@
-# Local-only files (not part of the published chart)
-values-secrets.yaml
-values-secrets.yaml.example
-resolve-deploy-secrets.sh
-read-secret.sh
-neo4j/
-README.md

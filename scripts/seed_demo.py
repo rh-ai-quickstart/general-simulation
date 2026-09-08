@@ -26,12 +26,12 @@ from datetime import datetime, timezone
 
 from neo4j import AsyncGraphDatabase
 
-from src.core.config import Settings
-from src.core.db import create_pool
-from src.core.ingestion import CanonicalEntity
-from src.graph.nodes import EDGE_CARRIES
-from src.graph.spatial_overlay import UK_AIRSPACE_BBOX, format_bbox
-from src.ingestion.runner import _insert_state, _upsert_entity
+from lib.core.config import Settings
+from lib.core.db import create_pool
+from lib.core.ingestion import CanonicalEntity
+from lib.graph.nodes import EDGE_CARRIES
+from lib.graph.spatial_overlay import UK_AIRSPACE_BBOX, format_bbox
+from lib.ingestion.runner import _insert_state, _upsert_entity
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s — %(message)s")
 logger = logging.getLogger(__name__)
@@ -817,7 +817,7 @@ async def _seed_neo4j(settings: Settings) -> None:
 
 async def _sync_spatial_overlay(settings: Settings) -> None:
     """Wire AFFECTED_BY from live PostGIS entities inside each scenario bbox."""
-    from src.graph.spatial_overlay import sync_event_affected_from_bbox
+    from lib.graph.spatial_overlay import sync_event_affected_from_bbox
 
     pool = await create_pool(settings)
     driver = AsyncGraphDatabase.driver(

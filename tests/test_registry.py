@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.config import Settings
-from src.ingestion.registry import (
+from lib.core.config import Settings
+from lib.ingestion.registry import (
     DOMAIN_CATALOG,
     get_adapter_registry,
     list_adapter_ids,
     list_enabled_domain_ids,
     resolve_solver,
 )
-from src.solver.stub import StubSolver
+from lib.solver.stub import StubSolver
 
 
 def test_catalog_has_aviation_and_shipping():

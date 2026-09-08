@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.api.app import app
-from src.api.health import get_settings
-from src.core.config import Settings
+from apps.api.app import app
+from apps.api.health import get_settings
+from lib.core.config import Settings
 
 
 def _test_settings() -> Settings:
@@ -32,7 +32,7 @@ def _ready_pool():
 @pytest.mark.asyncio
 async def test_health_db_reachable():
     with patch(
-        "src.api.health._check_db",
+        "apps.api.health._check_db",
         new_callable=AsyncMock,
         return_value=True,
     ):
@@ -50,7 +50,7 @@ async def test_health_db_reachable():
 @pytest.mark.asyncio
 async def test_health_db_unreachable():
     with patch(
-        "src.api.health._check_db",
+        "apps.api.health._check_db",
         new_callable=AsyncMock,
         return_value=False,
     ):

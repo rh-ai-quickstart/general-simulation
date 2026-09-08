@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.solver import (
+from lib.core.solver import (
     AffectedSubgraph,
     EntityState,
     LiveState,
@@ -19,15 +19,15 @@ from src.core.solver import (
     Solver,
     SolverResult,
 )
-from src.solver import StubSolver, call_solver_tool
-from src.solver.stub import (
+from lib.solver import StubSolver, call_solver_tool
+from lib.solver.stub import (
     _entity_value_usd,
     _impact_score,
     _longest_chain,
     _response_options,
     _total_value_at_risk,
 )
-from src.solver.tool import SOLVER_TOOL_SCHEMA
+from lib.solver.tool import SOLVER_TOOL_SCHEMA
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -407,7 +407,7 @@ async def test_call_solver_tool_with_injected_solver():
 
     class AlwaysOneSolver:
         def solve(self, subgraph, live_state):
-            from src.core.solver import SolverResult
+            from lib.core.solver import SolverResult
             return SolverResult(
                 event_id=subgraph.event_id,
                 affected_count=1,

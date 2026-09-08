@@ -34,7 +34,7 @@ from typing import Any
 
 import httpx
 
-from src.core.ingestion import CanonicalEntity
+from lib.core.ingestion import CanonicalEntity
 
 logger = logging.getLogger(__name__)
 

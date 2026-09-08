@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.core.ingestion import CanonicalEntity
+from lib.core.ingestion import CanonicalEntity
 
 logger = logging.getLogger(__name__)
 

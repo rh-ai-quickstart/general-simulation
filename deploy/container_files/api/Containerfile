@@ -1,7 +1,7 @@
 # FastAPI application image.
 #
 # Build (from repo root):
-#   podman build -f deploy/app/Containerfile -t general-sim-api:latest .
+#   podman build -f deploy/container_files/api/Containerfile -t general-sim-api:latest .
 #
 # Run locally (expects .env in cwd):
 #   podman run --env-file .env -p 8000:8000 general-sim-api:latest
@@ -58,7 +58,8 @@ RUN python -m venv .venv && \
 # (bootstrap-schema, ingest-run) are written into .venv/bin/.
 # --no-deps: deps are already installed above; skip re-resolving them.
 COPY pyproject.toml README.md ./
-COPY src/ ./src/
+COPY lib/ ./lib/
+COPY apps/ ./apps/
 COPY domain/ ./domain/
 RUN .venv/bin/pip install --no-cache-dir --no-deps .
 
@@ -73,14 +74,15 @@ WORKDIR /app
 # Bring the pre-built venv and source from the builder stage.
 # Paths match /app from the builder so venv shebangs are valid immediately.
 COPY --from=builder /app/.venv        /app/.venv
-COPY --from=builder /app/src          /app/src
+COPY --from=builder /app/lib          /app/lib
+COPY --from=builder /app/apps         /app/apps
 COPY --from=builder /app/domain       /app/domain
 COPY scripts/                         /app/scripts
 COPY pyproject.toml                   /app/pyproject.toml
 
 # Activate the venv for all subsequent RUN / CMD / ENTRYPOINT invocations.
 ENV PATH="/app/.venv/bin:$PATH"
-# Make `from src.xxx import ...` work without an editable install.
+# Make `from lib.xxx import ...` work without an editable install.
 ENV PYTHONPATH="/app"
 
 # OpenShift runs containers with a random UID in the root group.
@@ -94,4 +96,4 @@ USER 1001
 EXPOSE 8000
 
 # Uvicorn is installed inside the venv.
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "apps.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

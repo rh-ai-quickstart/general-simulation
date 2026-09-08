@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.graph.nodes import ALLOWED_DEPENDENCY_EDGE_TYPES, _require_allowed_edge_type
-from src.importers.commit import commit_import, draft_to_jsonable
-from src.importers.models import ImportDraft, ImportEdge, ImportEntity, ImportMapping
-from src.importers.parse import detect_columns, parse_import
-from src.importers.validate import validate_draft
+from lib.graph.nodes import ALLOWED_DEPENDENCY_EDGE_TYPES, _require_allowed_edge_type
+from lib.importers.commit import commit_import, draft_to_jsonable
+from lib.importers.models import ImportDraft, ImportEdge, ImportEntity, ImportMapping
+from lib.importers.parse import detect_columns, parse_import
+from lib.importers.validate import validate_draft
 
 
 def test_detect_columns_csv():
@@ -156,13 +156,13 @@ async def test_commit_import_calls_upserts():
     driver = MagicMock()
 
     with (
-        patch("src.importers.commit._upsert_entity", new_callable=AsyncMock) as up,
-        patch("src.importers.commit._insert_state", new_callable=AsyncMock) as st,
+        patch("lib.importers.commit._upsert_entity", new_callable=AsyncMock) as up,
+        patch("lib.importers.commit._insert_state", new_callable=AsyncMock) as st,
         patch(
-            "src.importers.commit.merge_entity_nodes", new_callable=AsyncMock
+            "lib.importers.commit.merge_entity_nodes", new_callable=AsyncMock
         ) as merge_n,
         patch(
-            "src.importers.commit.merge_dependency_edges", new_callable=AsyncMock
+            "lib.importers.commit.merge_dependency_edges", new_callable=AsyncMock
         ) as merge_e,
     ):
         merge_n.return_value = 2

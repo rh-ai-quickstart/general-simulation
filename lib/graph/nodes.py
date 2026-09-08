@@ -1,0 +1,222 @@
+"""Generic Entity node and dependency edge operations via Neo4j (Cypher).
+
+Domain rule: NO domain-specific labels or property names here.
+  - Nodes are always labelled ``Entity``; their domain type is a *property*.
+  - Dependency semantics live in the edge type string (e.g. ``DEPENDS_ON``,
+    ``FEEDS``, ``CARRIES``); callers choose the string, this module does not.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from neo4j import AsyncDriver
+
+from lib.graph.cypher import neo4j_session
+
+logger = logging.getLogger(__name__)
+
+EDGE_DEPENDS_ON = "DEPENDS_ON"
+EDGE_FEEDS = "FEEDS"
+EDGE_CARRIES = "CARRIES"
+
+# Relationship types that may be interpolated into Cypher (never user-freeform).
+ALLOWED_DEPENDENCY_EDGE_TYPES: frozenset[str] = frozenset(
+    {EDGE_DEPENDS_ON, EDGE_FEEDS, EDGE_CARRIES}
+)
+
+
+# ---------------------------------------------------------------------------
+# Entity node operations
+# ---------------------------------------------------------------------------
+
+
+async def create_entity_node(
+    driver: AsyncDriver,
+    entity_id: str,
+    entity_type: str,
+    attributes: dict[str, Any] | None = None,
+) -> None:
+    """MERGE an Entity node into the graph.
+
+    Idempotent: safe to call for an entity that already exists.
+    Existing node properties are updated with the supplied values.
+    """
+    query = (
+        "MERGE (n:Entity {id: $id}) "
+        "SET n.type = $type "
+        "RETURN id(n)"
+    )
+    async with neo4j_session(driver) as session:
+        await session.run(query, id=entity_id, type=entity_type)
+    logger.debug("Entity node upserted: id=%s type=%s", entity_id, entity_type)
+
+
+async def delete_entity_node(
+    driver: AsyncDriver,
+    entity_id: str,
+) -> None:
+    """Remove an Entity node and all its edges."""
+    query = "MATCH (n:Entity {id: $id}) DETACH DELETE n"
+    async with neo4j_session(driver) as session:
+        await session.run(query, id=entity_id)
+    logger.debug("Entity node deleted: id=%s", entity_id)
+
+
+async def get_entity_node(
+    driver: AsyncDriver,
+    entity_id: str,
+) -> dict[str, Any] | None:
+    """Return the properties of an Entity node, or None if not found."""
+    query = "MATCH (n:Entity {id: $id}) RETURN properties(n) AS props"
+    async with neo4j_session(driver) as session:
+        result = await session.run(query, id=entity_id)
+        record = await result.single()
+    if record is None:
+        return None
+    return dict(record["props"])
+
+
+# ---------------------------------------------------------------------------
+# Dependency edge operations
+# ---------------------------------------------------------------------------
+
+
+def _require_allowed_edge_type(edge_type: str) -> str:
+    if edge_type not in ALLOWED_DEPENDENCY_EDGE_TYPES:
+        raise ValueError(
+            f"Unsupported edge type {edge_type!r}; "
+            f"allowed: {sorted(ALLOWED_DEPENDENCY_EDGE_TYPES)}"
+        )
+    return edge_type
+
+
+async def create_dependency_edge(
+    driver: AsyncDriver,
+    from_id: str,
+    to_id: str,
+    edge_type: str = EDGE_DEPENDS_ON,
+) -> None:
+    """Create a directed dependency edge from *from_id* to *to_id*.
+
+    If the edge already exists, a duplicate is created — prefer
+    ``merge_dependency_edges`` for idempotent imports.
+    """
+    edge_type = _require_allowed_edge_type(edge_type)
+    query = (
+        f"MATCH (a:Entity {{id: $from_id}}), (b:Entity {{id: $to_id}}) "
+        f"CREATE (a)-[:{edge_type}]->(b) "
+        "RETURN id(a)"
+    )
+    async with neo4j_session(driver) as session:
+        await session.run(query, from_id=from_id, to_id=to_id)
+    logger.debug("Dependency edge created: %s -[%s]-> %s", from_id, edge_type, to_id)
+
+
+async def delete_dependency_edge(
+    driver: AsyncDriver,
+    from_id: str,
+    to_id: str,
+    edge_type: str = EDGE_DEPENDS_ON,
+) -> int:
+    """Delete dependency edges matching *from_id*, *to_id*, and *edge_type*.
+
+    Returns the number of relationships removed (0 if none matched).
+    """
+    edge_type = _require_allowed_edge_type(edge_type)
+    query = (
+        f"MATCH (a:Entity {{id: $from_id}})-[r:{edge_type}]->(b:Entity {{id: $to_id}}) "
+        "DELETE r"
+    )
+    async with neo4j_session(driver) as session:
+        result = await session.run(query, from_id=from_id, to_id=to_id)
+        summary = await result.consume()
+    deleted = summary.counters.relationships_deleted
+    if deleted:
+        logger.debug(
+            "Dependency edge deleted: %s -[%s]-> %s (count=%d)",
+            from_id,
+            edge_type,
+            to_id,
+            deleted,
+        )
+    return deleted
+
+
+async def merge_entity_nodes(
+    driver: AsyncDriver,
+    rows: list[dict[str, Any]],
+) -> int:
+    """Bulk-MERGE Entity nodes. Each row needs ``id`` and ``type``.
+
+    Optional ``dataset_id`` is set when present.
+    """
+    if not rows:
+        return 0
+    query = (
+        "UNWIND $rows AS row "
+        "MERGE (n:Entity {id: row.id}) "
+        "SET n.type = row.type "
+        "FOREACH (_ IN CASE WHEN row.dataset_id IS NULL THEN [] ELSE [1] END | "
+        "  SET n.dataset_id = row.dataset_id)"
+    )
+    async with neo4j_session(driver) as session:
+        await session.run(query, rows=rows)
+    logger.debug("Entity nodes merged: count=%d", len(rows))
+    return len(rows)
+
+
+async def merge_dependency_edges(
+    driver: AsyncDriver,
+    edges: list[dict[str, str]],
+) -> int:
+    """Idempotently MERGE dependency edges.
+
+    Each item: ``{from_id, to_id, edge_type}``. Edge types must be allowlisted.
+    """
+    if not edges:
+        return 0
+
+    by_type: dict[str, list[dict[str, str]]] = {}
+    for edge in edges:
+        et = _require_allowed_edge_type(edge["edge_type"])
+        by_type.setdefault(et, []).append(
+            {"from_id": edge["from_id"], "to_id": edge["to_id"]}
+        )
+
+    total = 0
+    async with neo4j_session(driver) as session:
+        for edge_type, rows in by_type.items():
+            query = (
+                "UNWIND $rows AS row "
+                "MATCH (a:Entity {id: row.from_id}), (b:Entity {id: row.to_id}) "
+                f"MERGE (a)-[:{edge_type}]->(b)"
+            )
+            await session.run(query, rows=rows)
+            total += len(rows)
+            logger.debug(
+                "Dependency edges merged: type=%s count=%d", edge_type, len(rows)
+            )
+    return total
+
+
+async def get_dependent_entities(
+    driver: AsyncDriver,
+    entity_id: str,
+    edge_type: str | None = None,
+) -> list[str]:
+    """Return the IDs of entities that *entity_id* depends on."""
+    if edge_type:
+        query = (
+            f"MATCH (a:Entity {{id: $id}})-[:{edge_type}]->(b:Entity) "
+            "RETURN b.id AS dep_id"
+        )
+    else:
+        query = (
+            "MATCH (a:Entity {id: $id})-[]->(b:Entity) "
+            "RETURN b.id AS dep_id"
+        )
+    async with neo4j_session(driver) as session:
+        result = await session.run(query, id=entity_id)
+        records = await result.data()
+    return [r["dep_id"] for r in records if r.get("dep_id") is not None]
