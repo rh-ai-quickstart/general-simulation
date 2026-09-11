@@ -8,11 +8,11 @@ import math
 
 import pytest
 
-from src.core.config import Settings
-from src.llm.base import LLMClientBase
-from src.llm.fake import FakeLLMClient, _cosine, _hash_embed
-from src.llm.factory import get_llm_client
-from src.llm.types import Message, ToolCall
+from lib.core.config import Settings
+from lib.llm.base import LLMClientBase
+from lib.llm.fake import FakeLLMClient, _cosine, _hash_embed
+from lib.llm.factory import get_llm_client
+from lib.llm.types import Message, ToolCall
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

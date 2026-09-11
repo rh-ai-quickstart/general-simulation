@@ -11,8 +11,8 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
-from src.graph.nodes import EDGE_CARRIES, EDGE_DEPENDS_ON, EDGE_FEEDS
-from src.graph.spatial_overlay import format_bbox
+from lib.graph.nodes import EDGE_CARRIES, EDGE_DEPENDS_ON, EDGE_FEEDS
+from lib.graph.spatial_overlay import format_bbox
 
 logger = logging.getLogger(__name__)
 

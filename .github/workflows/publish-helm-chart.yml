@@ -35,7 +35,7 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          CHART_VER=$(awk '/^version:/{print $2; exit}' deploy/helm/general-simulation/Chart.yaml)
+          CHART_VER=$(awk '/^version:/{print $2; exit}' deploy/helm/Chart.yaml)
           if [[ "${{ github.event_name }}" == "push" ]]; then
             TAG="${GITHUB_REF_NAME#chart-v}"
             if [[ "$TAG" != "$CHART_VER" ]]; then
@@ -52,10 +52,10 @@ jobs:
           helm repo update neo4j
           helm repo add ai-architecture-charts https://rh-ai-quickstart.github.io/ai-architecture-charts
           helm repo update ai-architecture-charts
-          helm dependency update deploy/helm/general-simulation
-          helm lint deploy/helm/general-simulation
+          helm dependency update deploy/helm
+          helm lint deploy/helm
           mkdir -p dist
-          helm package deploy/helm/general-simulation -d dist/
+          helm package deploy/helm -d dist/
 
       - name: Checkout gh-pages
         uses: actions/checkout@v4

@@ -23,10 +23,10 @@ from domain.shipping.bootstrap_graph import (
     SCENARIO_ID,
     bootstrap_shipping_graph,
 )
-from src.core.config import Settings
-from src.core.db import create_pool
-from src.graph.spatial_overlay import format_bbox, sync_event_affected_from_bbox
-from src.ingestion.runner import run_ingestion
+from lib.core.config import Settings
+from lib.core.db import create_pool
+from lib.graph.spatial_overlay import format_bbox, sync_event_affected_from_bbox
+from lib.ingestion.runner import run_ingestion
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s — %(message)s")
 logger = logging.getLogger(__name__)

@@ -31,11 +31,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from domain.aviation.adapters.opensky_flights import OpenSkyFlightsAdapter
-from src.core.config import Settings
-from src.core.db import create_neo4j_driver, create_pool
-from src.core.ingestion import CanonicalEntity
-from src.graph.nodes import EDGE_CARRIES
-from src.ingestion.runner import _insert_state, _upsert_entity
+from lib.core.config import Settings
+from lib.core.db import create_neo4j_driver, create_pool
+from lib.core.ingestion import CanonicalEntity
+from lib.graph.nodes import EDGE_CARRIES
+from lib.ingestion.runner import _insert_state, _upsert_entity
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s — %(message)s")
 logger = logging.getLogger(__name__)

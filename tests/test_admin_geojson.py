@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.api.app import app
-from src.api.deps import get_pool
+from apps.api.app import app
+from apps.api.deps import get_pool
 
 
 def _pool(conn: AsyncMock) -> MagicMock:
