@@ -2,8 +2,52 @@ apiVersion: v1
 entries:
   general-simulation:
   - apiVersion: v2
+    appVersion: 1.0.1
+    created: "2026-09-11T18:54:53.705388457Z"
+    dependencies:
+    - condition: neo4j.enabled
+      name: neo4j
+      repository: https://helm.neo4j.com/neo4j
+      version: 2026.5.0
+    - condition: llama-stack.enabled
+      name: llama-stack
+      repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+      version: 0.8.5
+    - condition: llm-service.enabled
+      name: llm-service
+      repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+      version: 0.5.9
+    - condition: pgvector.enabled
+      name: pgvector
+      repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+      version: 0.1.0
+    description: 'Umbrella chart for the General Simulation & Impact-Reasoning Platform.
+      Deploys Postgres (pgvector + PostGIS), Neo4j, Llama Stack, schema bootstrap,
+      the FastAPI API, and the ingestion CronJob. Optional in-cluster vLLM via llm-service
+      (OpenShift AI / KServe). Inference always goes through Llama Stack. Enable providers
+      via global.models.<key>.enabled and point api/ingestion model IDs at them. Install
+      standalone into any namespace, or consume as a Helm subchart from a parent application
+      (same release namespace as the parent). '
+    digest: f6c851a54ad9a920d84ad6c693236081e5cebf81825e4f45f71d4d49f90dcb05
+    home: https://github.com/robertsandoval/general-simulation
+    keywords:
+    - simulation
+    - neo4j
+    - pgvector
+    - postgis
+    - llama-stack
+    maintainers:
+    - name: general-sim
+    name: general-simulation
+    sources:
+    - https://github.com/robertsandoval/general-simulation
+    type: application
+    urls:
+    - https://rh-ai-quickstart.github.io/general-simulation/general-simulation-1.0.1.tgz
+    version: 1.0.1
+  - apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-09-11T18:52:39.484283778Z"
+    created: "2026-09-11T18:54:53.700045619Z"
     dependencies:
     - condition: neo4j.enabled
       name: neo4j
@@ -45,4 +89,4 @@ entries:
     urls:
     - https://rh-ai-quickstart.github.io/general-simulation/general-simulation-1.0.0.tgz
     version: 1.0.0
-generated: "2026-09-11T18:52:39.478700911Z"
+generated: "2026-09-11T18:54:53.695197068Z"
