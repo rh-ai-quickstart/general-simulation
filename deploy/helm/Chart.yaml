@@ -12,8 +12,8 @@ description: >
   Install standalone into any namespace, or consume as a Helm subchart from a
   parent application (same release namespace as the parent).
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
+version: 1.0.1
+appVersion: "1.0.1"
 keywords:
   - simulation
   - neo4j
