@@ -78,7 +78,7 @@ LOCAL_COMPOSE := deploy/local/composefile.yml
         undeploy status lint-charts test-unit smoke-test \
         local-up local-down local-bootstrap \
         _guard-values-secrets \
-        _guard-oc _guard-helm _guard-podman \
+        _guard-oc _guard-helm _guard-podman _guard-namespace \
         _remove-orphan-neo4j-resources _remove-openshift-routes
 
 # ── Default target ────────────────────────────────────────────────────────────
@@ -122,6 +122,15 @@ _guard-values-secrets:
 _guard-oc:
 	@command -v oc >/dev/null 2>&1 || \
 	  { echo "ERROR: 'oc' CLI not found. Install the OpenShift CLI and run 'oc login'."; exit 1; }
+
+_guard-namespace: _guard-oc
+	@oc get namespace $(NAMESPACE) >/dev/null 2>&1 || { \
+	  printf "ERROR: OpenShift project '%s' does not exist or is not visible.\n" "$(NAMESPACE)"; \
+	  printf "  oc new-project %s\n" "$(NAMESPACE)"; \
+	  printf "  # or, if it already exists:\n"; \
+	  printf "  oc project %s\n" "$(NAMESPACE)"; \
+	  exit 1; \
+	}
 
 _guard-helm:
 	@command -v helm >/dev/null 2>&1 || \
@@ -196,7 +205,7 @@ _remove-orphan-neo4j-resources: _guard-oc
 	    if [ "$$kind" = rolebinding ]; then \
 	      oc delete $$kind $$name -n $$ns --ignore-not-found; \
 	    else \
-	      oc delete $$kind $$name --ignore-not-found; \
+	      oc delete $$kind $$name --ignore-not-found 2>/dev/null || true; \
 	    fi; \
 	  fi; \
 	done
@@ -228,7 +237,7 @@ _remove-openshift-routes: _guard-oc
 deploy: deploy-umbrella
 
 deploy-umbrella: _guard-values-secrets \
-                 _guard-oc _guard-helm _remove-orphan-neo4j-resources
+                 _guard-oc _guard-helm _guard-namespace _remove-orphan-neo4j-resources
 	@echo "==> Updating umbrella chart dependencies..."
 	helm repo add neo4j https://helm.neo4j.com/neo4j 2>/dev/null || true
 	helm repo update neo4j
@@ -283,10 +292,10 @@ undeploy: _guard-helm _guard-oc _remove-openshift-routes
 	helm uninstall bootstrap --namespace $(NAMESPACE) 2>/dev/null || true
 	helm uninstall neo4j     --namespace $(NAMESPACE) 2>/dev/null || true
 	helm uninstall postgres  --namespace $(NAMESPACE) 2>/dev/null || true
-	@echo "==> Removing Neo4j anyuid SCC binding + ServiceAccount..."
+	@echo "==> Removing Neo4j OpenShift resources (legacy SCC bindings best-effort)..."
 	@oc delete rolebinding neo4j-anyuid -n $(NAMESPACE) --ignore-not-found >/dev/null
-	@oc delete clusterrolebinding $(NAMESPACE)-neo4j-anyuid --ignore-not-found >/dev/null
-	@oc delete clusterrolebinding $(NAMESPACE)-postgres-anyuid --ignore-not-found >/dev/null
+	@oc delete clusterrolebinding $(NAMESPACE)-neo4j-anyuid --ignore-not-found 2>/dev/null || true
+	@oc delete clusterrolebinding $(NAMESPACE)-postgres-anyuid --ignore-not-found 2>/dev/null || true
 	@oc delete serviceaccount neo4j-sa -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@oc delete secret neo4j-auth pgvector -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@echo "    Done. PVCs are NOT deleted automatically — remove manually if needed:"
