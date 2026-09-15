@@ -96,7 +96,7 @@ llama-stack:
       name: cache
 
 llm-service:
-  enabled: true
+  enabled: false
   models:
     llama-3-1-8b-instruct-fp8-dynamic:
       enabled: true
