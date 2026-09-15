@@ -1,0 +1,19 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+data:
+  LLM_BASE_URL: {{ include "api.llmBaseUrl" . | quote }}
+  LLM_BACKEND: {{ include "api.llmBackend" . | quote }}
+  GENERATION_MODEL_ID: {{ include "api.generationModelId" . | quote }}
+  EMBEDDING_MODEL_ID: {{ include "api.embeddingModelId" . | quote }}
+  EMBEDDING_DIMENSION: {{ include "api.embeddingDimension" . | quote }}
+  ENABLED_DOMAINS: {{ include "api.enabledDomains" . | quote }}
+  NEO4J_USER: {{ include "api.neo4jUser" . | quote }}
+  STARTUP_DB_WAIT_SECONDS: {{ include "api.waitForTimeoutSeconds" . | quote }}
+  STARTUP_DB_WAIT_INTERVAL_SECONDS: "2"
+{{- end }}

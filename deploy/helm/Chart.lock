@@ -1,0 +1,15 @@
+dependencies:
+- name: neo4j
+  repository: https://helm.neo4j.com/neo4j
+  version: 2026.5.0
+- name: llama-stack
+  repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  version: 0.8.5
+- name: llm-service
+  repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  version: 0.5.9
+- name: pgvector
+  repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  version: 0.1.0
+digest: sha256:e016b253dd84e73f23a33f7ff8c6aca5e21e4f5b30334ed5beabc6cb5d12454c
+generated: "2026-09-08T15:10:45.544717-04:00"

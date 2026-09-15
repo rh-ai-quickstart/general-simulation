@@ -21,18 +21,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.api.app import app
-from src.api.deps import get_llm_client, get_neo4j_driver, get_pool, get_solver
-from src.core.config import Settings
-from src.core.solver import AffectedSubgraph, EntityState
-from src.llm.fake import FakeLLMClient
-from src.llm.types import GenerateResult, ToolCall
-from src.reasoning.pipeline import run_pipeline
-from src.reasoning.stage1 import run_stage1
-from src.reasoning.stage2 import run_stage2
-from src.reasoning.stage3 import run_stage3
-from src.reasoning.types import QueryRequest
-from src.solver.stub import StubSolver
+from apps.api.app import app
+from apps.api.deps import get_llm_client, get_neo4j_driver, get_pool, get_solver
+from lib.core.config import Settings
+from lib.core.solver import AffectedSubgraph, EntityState
+from lib.llm.fake import FakeLLMClient
+from lib.llm.types import GenerateResult, ToolCall
+from lib.reasoning.pipeline import _agent_tools, run_pipeline
+from lib.reasoning.stage1 import run_stage1
+from lib.reasoning.stage2 import run_stage2
+from lib.reasoning.stage3 import run_stage3
+from lib.reasoning.types import QueryRequest
+from lib.solver.stub import StubSolver
 
 
 # ── Test constants ─────────────────────────────────────────────────────────────
@@ -424,6 +424,13 @@ async def test_pipeline_react_calls_subgraph_and_solver():
 
 
 # ── Pipeline orchestrator unit tests ──────────────────────────────────────────
+
+
+def test_agent_tools_respects_allow_live_ingestion_flag():
+    enabled = [t["function"]["name"] for t in _agent_tools(allow_live_ingestion=True)]
+    disabled = [t["function"]["name"] for t in _agent_tools(allow_live_ingestion=False)]
+    assert "run_ingestion_pull" in enabled
+    assert "run_ingestion_pull" not in disabled
 
 
 @pytest.mark.asyncio

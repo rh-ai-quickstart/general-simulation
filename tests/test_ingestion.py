@@ -24,11 +24,11 @@ from domain.shipping.adapters.shipping_demo import (
     VESSEL_TYPE,
     ShippingDemoAdapter,
 )
-from src.core.config import Settings
-from src.core.ingestion import CanonicalEntity, IngestionAdapter
-from src.ingestion.registry import list_adapter_ids
-from src.ingestion.runner import _insert_state, _upsert_entity, run_ingestion
-from src.ingestion.tool import (
+from lib.core.config import Settings
+from lib.core.ingestion import CanonicalEntity, IngestionAdapter
+from lib.ingestion.registry import list_adapter_ids
+from lib.ingestion.runner import _insert_state, _upsert_entity, run_ingestion
+from lib.ingestion.tool import (
     call_ingestion_tool,
     get_ingestion_tool_schema,
 )
@@ -305,7 +305,7 @@ async def test_call_ingestion_tool_success():
     pool, _ = _make_pool_mock()
 
     with patch(
-        "src.ingestion.tool.run_ingestion",
+        "lib.ingestion.tool.run_ingestion",
         new_callable=AsyncMock,
         return_value=22,
     ):

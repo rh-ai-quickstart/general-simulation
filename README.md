@@ -9,7 +9,7 @@ A **domain-agnostic** simulation and impact-reasoning platform built on:
 | Dependency graph | **Neo4j** (native async driver, Cypher queries) |
 | Live / geo snapshot | PostGIS, queried directly |
 | API | FastAPI |
-| Admin UI | Built-in SPA at `/admin/` |
+| Admin API | JSON endpoints at `/admin/*` (automation / scripts) |
 | Dependency management | [uv](https://docs.astral.sh/uv/) |
 
 > **Core design rule:** Live ground-truth data is **never mutated** by a simulation.
@@ -67,16 +67,17 @@ OpenShift is the deployment substrate and a fixed requirement, not an interchang
 
 ### Llama Stack — inference gateway
 
-On OpenShift, the API and ingestion CronJob always call **Llama Stack** (`http://llamastack:8321/v1`). Stack fronts exactly two modes:
+On OpenShift, the API and ingestion CronJob always call **Llama Stack** (`http://llamastack:8321/v1`). Stack fronts three modes:
 
 | Mode | Upstream | When to use |
 |---|---|---|
-| `openai` (default) | OpenAI API | No GPU / quickest path |
+| `maas` (default) | LiteMaaS (`external-model/llama-scout-17b`) | Workshop / shared MaaS endpoint |
+| `openai` | OpenAI API | No GPU / quickest path |
 | `local` | In-cluster `llm-service` (vLLM on OpenShift AI) | Keep weights inside the cluster |
 
 ### LLM client — the inference and RAG backend
 
-The app talks to any OpenAI-compatible inference endpoint through `src/llm/openai_client.py`. Cluster defaults point at Stack; local-dev can still point at OpenAI or a laptop vLLM:
+The app talks to any OpenAI-compatible inference endpoint through `lib/llm/openai_client.py`. Cluster defaults point at Stack; local-dev can still point at OpenAI or a laptop vLLM:
 
 | Provider | `LLM_BASE_URL` | `LLM_BACKEND` |
 |---|---|---|
@@ -88,7 +89,7 @@ The app talks to any OpenAI-compatible inference endpoint through `src/llm/opena
 
 Vector/RAG operations (embed, ingest, search) go directly to **pgvector** via asyncpg — no intermediate server required. A single `llm_embeddings` table in Postgres stores all collections.
 
-> **Design rule:** Application code goes through `LLMClientBase` (`src/llm/`) for anything involving the model, embeddings, or vector search — never calling any inference API or pgvector SQL directly. The sole exceptions are graph (Neo4j) and live/geo (PostGIS), which are queried directly.
+> **Design rule:** Application code goes through `LLMClientBase` (`lib/llm/`) for anything involving the model, embeddings, or vector search — never calling any inference API or pgvector SQL directly. The sole exceptions are graph (Neo4j) and live/geo (PostGIS), which are queried directly.
 
 ### Neo4j — the property graph
 
@@ -108,7 +109,7 @@ Postgres carries the remaining two persistence concerns. The dependency graph ha
 Ingestion adapters live under `domain/<name>/adapters/`. Each pulls from one
 external source and normalises into a single **canonical schema** (id, type,
 optional geometry, timestamp, status, and a free-form attributes field). The
-shared runner in `src/ingestion/` upserts into PostGIS only — ground truth,
+shared runner in `lib/ingestion/` upserts into PostGIS only — ground truth,
 never the simulation overlay. Which domain packages load is controlled by
 `ENABLED_DOMAINS`; which adapter a CronJob runs is `--adapter` / Helm
 `adapterId`. Details: [ADD_DOMAIN.md](ADD_DOMAIN.md). Cursor paste-prompts:
@@ -117,36 +118,50 @@ never the simulation overlay. Which domain packages load is controlled by
 Each adapter runs two ways: as a scheduled OpenShift CronJob for steady polling, and as an on-demand callable that the reasoning agent can trigger mid-query when it needs current data.
 
 
-### Admin UI — browse and manage data
+### Admin JSON API
 
-A built-in single-page application is served at `GET /admin/`. It provides a read/write view over both stores without any extra tooling:
+REST endpoints under `/admin` support automation: ingestion runs, graph browsing, scenario injection, and imports. Use `seed-demo` and `POST /query` for post-deploy smoke tests (see [Demo against a live deployment](#6-demo-against-a-live-deployment)).
 
 | Route | Description |
 |---|---|
-| `GET /admin/` | Admin SPA (HTML) |
 | `GET /admin/stats` | Aggregate counts from Postgres and Neo4j |
 | `GET /admin/entity-types` | Distinct entity types in the live store |
 | `GET /admin/entities` | Paginated entity list with search/filter |
+| `GET /admin/entities/geojson` | GeoJSON FeatureCollection for entities with geometry |
 | `GET /admin/entities/{id}` | Entity detail and state history |
+| `GET /admin/entities/in-bbox` | Entity IDs inside a WGS84 bounding box |
+| `GET /admin/data/sync-status` | Postgres vs Neo4j entity drift |
+| `GET /admin/ingestion/adapters` | List enabled ingestion adapters |
+| `POST /admin/ingestion/run` | On-demand adapter run |
+| `GET /admin/platform/config` | Read-only platform settings |
+| `POST /admin/platform/bootstrap` | Idempotent schema bootstrap |
+| `GET /admin/imports/formats` | Supported import formats and edge types |
+| `POST /admin/imports/preview` | Validate an import file |
+| `POST /admin/imports/commit` | Commit entities + dependency edges |
 | `GET /admin/graph/nodes` | Entity nodes from Neo4j |
 | `GET /admin/graph/scenarios` | Distinct scenario IDs |
 | `GET /admin/graph/events` | SimulationEvent nodes (optional scenario filter) |
 | `GET /admin/graph/edges` | All dependency / AFFECTED_BY edges |
 | `POST /admin/graph/events` | Inject a new simulation event overlay |
+| `POST /admin/graph/scenarios/{id}/sync-spatial` | Refresh AFFECTED_BY edges from PostGIS bbox |
+| `POST /admin/graph/dependency-edges` | Create or merge a dependency edge |
+| `DELETE /admin/graph/dependency-edges` | Remove a dependency edge |
 | `DELETE /admin/graph/scenarios/{id}` | Remove a scenario from the graph and vector store |
+
+A web UI is not shipped in the current release; a separate UI will be added in a future release (exact form TBD).
 
 ### The ReAct agent pipeline
 
-The pipeline (`src/reasoning/pipeline.py`) is a **ReAct (Reason + Act) agent loop**: the LLM is the top-level orchestrator. It decides which tools to call, in what order, and when it has gathered enough information to answer. A safety cap of six rounds prevents unbounded loops.
+The pipeline (`lib/reasoning/pipeline.py`) is a **ReAct (Reason + Act) agent loop**: the LLM is the top-level orchestrator. It decides which tools to call, in what order, and when it has gathered enough information to answer. A safety cap of six rounds prevents unbounded loops.
 
 The LLM has four tools:
 
 | Tool | Module | What it does |
 |---|---|---|
-| `get_affected_subgraph` | `src/graph/tool.py` | Neo4j Cypher traversal — finds every entity reachable from the simulation event via dependency edges, plus entity attributes (callsign, route, etc.) |
-| `solve_impact` | `src/reasoning/pipeline.py` | Runs the Stage-2 solver on the affected subgraph — returns impact score, chain length, and ranked response options |
-| `search_scenario_context` | `src/reasoning/search_tool.py` | pgvector semantic search over the scenario's event-narrative collection |
-| `run_ingestion_pull` | `src/ingestion/tool.py` | On-demand live data refresh from a registered adapter |
+| `get_affected_subgraph` | `lib/graph/tool.py` | Neo4j Cypher traversal — finds every entity reachable from the simulation event via dependency edges, plus entity attributes (callsign, route, etc.) |
+| `solve_impact` | `lib/reasoning/pipeline.py` | Runs the Stage-2 solver on the affected subgraph — returns impact score, chain length, value at risk, ranked response options, and recommended reroutes |
+| `search_scenario_context` | `lib/reasoning/search_tool.py` | pgvector semantic search over the scenario's event-narrative collection |
+| `run_ingestion_pull` | `lib/ingestion/tool.py` | On-demand live data refresh from a registered adapter |
 
 The agent typically calls tools in the order above, but nothing enforces that sequence: a question about current positions may start with `run_ingestion_pull`; a simple clarification may skip the solver entirely. The `tool_call_trace` field in every `POST /query` response exposes each call the agent made and what it returned, making the reasoning fully auditable.
 
@@ -267,7 +282,7 @@ domain/                      # Domain packages (adapters, optional solvers)
   shipping/
     adapters/                # e.g. shipping_demo (synthetic → live API)
     bootstrap_graph.py       # Neo4j edges + scenario overlay
-src/
+lib/
   core/                      # Domain-agnostic abstractions, interfaces, and Settings
   ingestion/
     registry.py              # ENABLED_DOMAINS catalog + adapter/solver resolution
@@ -294,8 +309,21 @@ src/
     openai_client.py         # OpenAI-compatible inference + pgvector RAG
     fake.py                  # FakeLLMClient for tests (supports response_sequence)
     types.py                 # Message / ToolCall / GenerateResult / Chunk
-  api/                       # FastAPI entrypoint + admin SPA
-deploy/                      # Containerfiles, Helm charts, OpenShift manifests
+apps/
+  api/                       # FastAPI entrypoint + JSON admin API (/admin/*)
+deploy/                      # Containerfiles, Helm chart, local dev compose
+  local/
+    composefile.yml          # Postgres + Neo4j for local development
+  container_files/
+    api/                     # FastAPI app Containerfile
+    postgres/                # Custom Postgres image (pgvector + PostGIS)
+  helm/                      # Umbrella Helm chart (authoritative deploy path)
+    templates/
+      api/                   # API Deployment, Service, Route
+      bootstrap/             # Schema bootstrap Job
+      ingestion/             # CronJob + hook Job
+      neo4j/                 # neo4j-auth Secret, SA, SCC binding
+      postgres/              # Postgres StatefulSet + Services
 tests/
 ```
 
@@ -309,70 +337,74 @@ tests/
 uv sync --all-extras
 ```
 
-### 2. Start local services (Postgres + Neo4j)
-
-```bash
-docker compose up -d
-```
-
-This starts Postgres (pgvector + PostGIS) on port 5432 and Neo4j on ports 7474
-(Browser UI) and 7687 (Bolt).  Wait for both healthchecks to pass, then run the
-schema bootstrap:
-
-```bash
-uv run python -m src.graph.bootstrap
-```
-
-### 3. Configure environment
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env: set POSTGRES_DSN, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
-# LLM_* settings, and optionally ENABLED_DOMAINS (default: aviation,shipping).
-#
-# With compose defaults:
-#   POSTGRES_DSN=postgresql://sim:sim@localhost:5432/sim
+# Defaults match compose (Postgres on 5433 — not 5432, to avoid Postgres.app clashes):
+#   POSTGRES_DSN=postgresql://sim:sim@localhost:5433/sim
 #   NEO4J_URI=bolt://localhost:7687
 #   NEO4J_USER=neo4j
-#   NEO4J_PASSWORD=sim
+#   NEO4J_PASSWORD=simsimsim
 #   ENABLED_DOMAINS=aviation,shipping
 ```
 
-### 4. Run the API
+### 3. Start local services (Postgres + Neo4j)
 
 ```bash
-uv run python -m src.api.main
+make local-up
+# or: podman compose -f deploy/local/composefile.yml up -d --wait
+```
+
+This starts Postgres (pgvector + PostGIS) on **port 5433** and Neo4j on ports
+7474 (Browser UI) and 7687 (Bolt). `--wait` blocks until healthchecks pass.
+
+### 4. Bootstrap schema
+
+```bash
+make local-bootstrap
+# or: uv run python -m lib.graph.bootstrap
+```
+
+### 5. Run the API
+
+```bash
+uv run python -m apps.api.main
 # or:
-uv run uvicorn src.api.app:app --reload
+uv run uvicorn apps.api.app:app --reload
 ```
 
 Visit `http://localhost:8000/health` — returns `{"status": "ok", "db": "reachable"}` when Postgres is reachable.
-Visit `http://localhost:8000/admin/` for the admin SPA (requires both Postgres and Neo4j).
 
-### 5. Run tests (no GPU or live Llama Stack required)
+### 6. Run tests (no GPU or live Llama Stack required)
 
 ```bash
-uv run pytest
+make test-unit
+# or: uv run pytest
 ```
 
 
 ### 6. Demo against a live deployment
 
-Two helpers are included for smoke-testing a running cluster:
+CLI helpers for smoke-testing a running cluster (UK airspace closure scenario):
 
 ```bash
-# Run a canned query against the deployed API
-./demo.sh [scenario_id] [question]
+# Seed demo entities + UK closure overlay, then POST /query
+make smoke-test
+# or with in-cluster seeding after deploy:
+SEED_MODE=cluster NAMESPACE=general-simulation make smoke-test
 
-# Seed aviation UK-closure demo (Neo4j + Postgres)
-uv run python scripts/seed_demo.py
+# Seed only (local or in-cluster)
+uv run seed-demo
 
-# Seed shipping LA-closure demo (fixture ingest + graph + overlay)
+# Query only against a running API (defaults to UK airspace closure)
+./scripts/smoke-uk-closure.sh   # set SEED_MODE=skip to skip seeding
+
+# Shipping LA-closure demo (fixture ingest + graph + overlay)
 uv run python scripts/seed_shipping.py
 ```
 
-`demo.sh` defaults to the shipping LA port-closure scenario.
-`seed_demo.py` / `seed_shipping.py` create sample entities, dependency edges, and a simulation event so the full pipeline can be exercised end to end.
+`seed-demo` / `scripts/seed_demo.py` create sample aircraft, dependency edges, and the `opensky-uk-closure-001` simulation event so the full pipeline can be exercised end to end.
 
 ---
 
@@ -424,24 +456,11 @@ LLM_BACKEND=openai
 GENERATION_MODEL_ID=openai/gpt-4o-mini   # or llama-3-2-3b-instruct/meta-llama/Llama-3.2-3B-Instruct
 ```
 
-### Running without a GPU (CI / dev laptops)
-
-Set `LLM_BACKEND=fake` in `.env`. `FakeLLMClient` provides:
-- Deterministic embeddings (hash-seeded unit vectors, correct dimension)
-- In-memory vector store (ingest then search, cosine similarity)
-- `canned_tool_calls` — emitted once then cleared, for single-round tool tests
-- `response_sequence` — an ordered queue of `GenerateResult` objects popped on each `generate()` call; use this to simulate a full multi-step ReAct trace in tests without a real model
-
-```bash
-LLM_BACKEND=fake
-```
-
-
 ## OpenShift Deployment
 
 Deployment is driven by a **Makefile** that wraps `podman build/push` for
 images and **Helm** for all Kubernetes resources.  Each component has its own
-Helm chart under `deploy/helm/` so components can be upgraded independently.
+Helm chart under [`deploy/helm/`](deploy/helm/) so components can be upgraded independently.
 
 ### Prerequisites
 
@@ -465,26 +484,25 @@ Core platform components (Postgres, Neo4j, API, ingestion) need no extra operato
 # 1. Log in to quay.io so podman can push images
 podman login quay.io
 
-# 2. Build and push container images
+# 2. Configure secrets (required before deploy)
+cp deploy/helm/values-secrets.yaml.example deploy/helm/values-secrets.yaml
+# edit deploy/helm/values-secrets.yaml — passwords, API tokens, hf_token
+
+# 3. Build and push container images
 make build
 
-# 3. One umbrella release (Postgres + Neo4j + Llama Stack + API + ingestion)
-#    Secrets via --set only — never committed to values files.
-
-# Default: Llama Stack → OpenAI
-make deploy \
-  PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
-  OPENAI_API_KEY=<key>
-
-# Or: Llama Stack → in-cluster vLLM (needs OpenShift AI + GPU)
-make deploy LLM_MODE=local \
-  PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> \
-  HF_TOKEN=<hf-token>
+# 4. One umbrella release (Postgres + Neo4j + Llama Stack + API + ingestion)
+make deploy
 ```
 
+Default toggles in [`deploy/helm/values.yaml`](deploy/helm/values.yaml): `ingestion.enabled: false`
+(CronJob off until you turn it on), `llm-service.enabled: true` (requires GPU +
+OpenShift AI unless you disable it).
+
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
-`make deploy` applies the umbrella Helm chart, which creates `neo4j-sa` / anyuid SCC (when `openshift.neo4j.scc.enabled`) and Secret `neo4j-auth`, and wires Llama Stack for the chosen
-`LLM_MODE` (`openai` or `local`).
+`templates/neo4j/` resources (`neo4j-sa`, anyuid SCC, Secret `neo4j-auth` when
+`openshift.neo4j.scc.enabled`), and wires Llama Stack to enabled `global.models`
+providers.
 
 ---
 
@@ -492,14 +510,10 @@ make deploy LLM_MODE=local \
 
 | Chart | Path | Key resources |
 |---|---|---|
-| `general-simulation` (umbrella) | `deploy/helm/general-simulation` | Single release; pulls subcharts below |
-| `postgres` | `deploy/helm/postgres` | StatefulSet, Services, anyuid SCC, Secret, init SQL |
-| `neo4j` | `neo4j/neo4j` (official) | StatefulSet; `neo4j-sa` + anyuid for UID 7474 |
-| `bootstrap` | `deploy/helm/bootstrap` | Schema Job (Helm hook) |
-| `llama-stack` | [ai-architecture-charts](https://rh-ai-quickstart.github.io/ai-architecture-charts) | Inference gateway (`llamastack:8321`) |
-| `llm-service` | same repo | In-cluster vLLM; enabled only for `LLM_MODE=local` |
-| `api` | `deploy/helm/api` | Deployment, Service, Route |
-| `ingestion` | `deploy/helm/ingestion` | CronJob |
+| `general-simulation` | `deploy/helm/` | Inline templates: `postgres/`, `neo4j/`, `bootstrap/`, `api/`, `ingestion/` |
+| `neo4j` | external dep | Official Neo4j StatefulSet (reads Secret `neo4j-auth`) |
+| `llama-stack` | external dep | Inference gateway (`llamastack:8321`) |
+| `llm-service` | external dep | In-cluster vLLM; enable via `llm-service.enabled` |
 
 ---
 
@@ -525,47 +539,28 @@ make build REGISTRY=quay.io/myorg TAG=v1.2.3
 
 ---
 
-### Step 2 — Deploy Postgres
+### Step 2 — Deploy (recommended)
+
+Use the single umbrella release — Postgres, Neo4j, bootstrap, Llama Stack, API,
+and ingestion are all in [`deploy/helm/`](deploy/helm/):
 
 ```bash
-make deploy-postgres PG_PASSWORD=<your-password>
+make deploy
 ```
 
-This installs the `postgres` Helm chart which:
-- Creates the `general-simulation` namespace (idempotent)
-- Applies a `ClusterRoleBinding` granting `anyuid` SCC to the `postgres-sa` ServiceAccount (so the container can run as UID 999)
-- Creates the `postgres-credentials` Secret from `--set postgres.password=...`
-- Mounts an init-SQL ConfigMap that enables the `vector` and `postgis` extensions on first startup
-- Deploys a StatefulSet with a 10 Gi PVC and readiness/liveness probes
+Secrets must be in `deploy/helm/values-secrets.yaml` (see `deploy/helm/values-secrets.yaml.example`).
 
-Wait for Postgres to be ready:
-
-```bash
-oc rollout status statefulset/postgres -n general-simulation --timeout=300s
-```
+Component toggles live in [`deploy/helm/values.yaml`](deploy/helm/values.yaml) under `postgres.enabled`, `api.enabled`, etc.
 
 ---
 
-### Step 3 — Deploy Neo4j
+### Neo4j Browser access
 
-```bash
-make deploy-neo4j NEO4J_PASSWORD=<your-password>
-```
+Neo4j is deployed by the umbrella chart (`neo4j.enabled` in `deploy/helm/values.yaml`).
+OpenShift wiring (`neo4j-sa`, SCC, `neo4j-auth`) is rendered from
+`deploy/helm/templates/neo4j/` when `openshift.neo4j.scc.enabled` is true.
 
-This installs the official `neo4j/neo4j` Helm chart (advanced per-component target). The **umbrella** chart (`make deploy`) creates `neo4j-sa`, anyuid SCC, and `neo4j-auth` automatically when `openshift.neo4j.scc.enabled` is true.
-
-The standalone `deploy-neo4j` target still:
-- Creates a `neo4j-sa` ServiceAccount and grants it the `anyuid` SCC
-  (Neo4j runs as UID/GID 7474, which `restricted-v2` rejects)
-- Creates a `neo4j-auth` Secret with `NEO4J_AUTH=neo4j/<password>`
-  (pass the password only — do not include a `neo4j/` prefix in `NEO4J_PASSWORD`)
-- Deploys a StatefulSet with Bolt (7687) and HTTP Browser (7474) services
-- Creates an edge-terminated HTTPS Route for Neo4j Browser
-
-Pass the same `NEO4J_PASSWORD` to later bootstrap/API/ingestion targets so they
-can authenticate against this instance.
-
-For local Browser + Bolt access (Bolt cannot be proxied through the Route):
+For local Browser + Bolt access (Bolt cannot be proxied through a Route):
 
 ```bash
 make neo4j-connect
@@ -573,84 +568,30 @@ make neo4j-connect
 
 ---
 
-### Step 4 — Run the schema bootstrap Job
+### In-cluster vLLM
 
-```bash
-make deploy-bootstrap PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password>
-```
-
-The `bootstrap` chart deploys a Job as a Helm `post-install,post-upgrade` hook.
-Helm waits for the Job to complete before marking the release successful
-(`--atomic --timeout 3m`).  The Job is deleted automatically on success.
-Re-running `make deploy-bootstrap` is fully idempotent.
-
----
-
-### Step 4 — In-cluster vLLM (local mode only)
-
-Prefer `make deploy LLM_MODE=local`. That enables `llm-service` inside the
-umbrella and points Llama Stack at the in-cluster InferenceService
-(`<model-key>-vllm`).
-
-Standalone / debug:
-
-```bash
-make deploy-llm-service HF_TOKEN=<your-hf-token>
-```
+Set `llm-service.enabled: true` in [`deploy/helm/values.yaml`](deploy/helm/values.yaml) and enable
+the in-cluster model under `global.models`. Llama Stack points at the
+InferenceService (`<model-key>-vllm`). Set `llm-service.secret.hf_token` in
+`deploy/helm/values-secrets.yaml`.
 
 Requires Red Hat OpenShift AI (KServe). First start downloads model weights and
 can take several minutes. Do **not** point the API at vLLM directly — Stack is
 the only client of that Service.
 
-Legacy plain Deployment manifests remain under `deploy/openshift/vllm/` and
-`deploy/archived/vllm-helm/` for reference only.
-
----
-
-### Step 6 — Deploy the API and ingestion CronJob
-
-```bash
-make deploy-api        PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password> OPENAI_API_KEY=<your-key>
-make deploy-ingestion  PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password> OPENAI_API_KEY=<your-key>
-```
-
-The `api` chart creates 2 replicas with topology spread across nodes and an
-OpenShift Route with TLS edge termination.
-
-Smoke test after deploy:
-
-```bash
-ROUTE=$(oc get route general-sim-api -n general-simulation -o jsonpath='{.spec.host}')
-curl -s https://$ROUTE/health | jq .
-# Expected: {"status": "ok", "db": "reachable"}
-```
-
-Trigger the ingestion job immediately to verify end-to-end:
-
-```bash
-oc create job ingestion-manual \
-  --from=cronjob/general-sim-ingestion \
-  -n general-simulation
-
-oc wait job/ingestion-manual \
-  -n general-simulation --for=condition=complete --timeout=120s
-```
-
 ---
 
 ### Per-component upgrades
 
-After changing code or config, rebuild the affected image and upgrade only that
-chart — no need to re-deploy everything:
+After changing code, rebuild and redeploy the umbrella chart:
 
 ```bash
 make build-app
-make deploy-api PG_PASSWORD=<your-password> NEO4J_PASSWORD=<your-password>
+make deploy
 ```
 
-To upgrade a chart's non-secret values, edit `deploy/helm/<chart>/values.yaml`
-and re-run the `make deploy-<chart>` target.  Secrets are always supplied via
-`--set` and are never stored in values files.
+To change config, edit [`deploy/helm/values.yaml`](deploy/helm/values.yaml) and/or
+[`deploy/helm/values-secrets.yaml`](deploy/helm/values-secrets.yaml), then run `make deploy`.
 
 ---
 
@@ -669,27 +610,20 @@ make undeploy
 ```bash
 make help
 make build
-make deploy PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> OPENAI_API_KEY=<key>
-make deploy LLM_MODE=local PG_PASSWORD=<pw> NEO4J_PASSWORD=<pw> HF_TOKEN=<tok>
+make deploy
 make neo4j-connect
 make status
 make lint-charts
 make undeploy
-# Advanced per-component: deploy-postgres, deploy-neo4j, deploy-bootstrap,
-# deploy-api, deploy-ingestion, deploy-llm-service
 ```
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_MODE` | `openai` | `openai` or `local` |
 | `REGISTRY` | `quay.io/rh-ai-quickstart` | Image registry root |
 | `APP_IMAGE_NAME` | `general-sim-api` | App image name under `REGISTRY` |
 | `NAMESPACE` | `general-simulation` | Target OpenShift namespace |
 | `TAG` | `latest` | Image tag |
-| `PG_PASSWORD` | *(none)* | Required |
-| `NEO4J_PASSWORD` | *(none)* | Required |
-| `OPENAI_API_KEY` | *(none)* | Required when `LLM_MODE=openai` |
-| `HF_TOKEN` | *(none)* | Required when `LLM_MODE=local` |
+| `DEPLOY_TIMEOUT` | `25m` | Helm `--wait` timeout |
 
 ---
 
@@ -703,15 +637,13 @@ Short names resolve inside the release namespace (standalone or when this chart 
 | Neo4j Bolt | `bolt://neo4j:7687` | `bolt://neo4j.general-simulation.svc:7687` |
 | Neo4j HTTP | `http://neo4j:7474` | `http://neo4j.general-simulation.svc:7474` |
 | Llama Stack | `http://llamastack:8321` | `http://llamastack.<ns>.svc:8321` |
-| vLLM (`llm-service`, local mode) | `http://llama-3-2-3b-instruct-vllm` | `http://llama-3-2-3b-instruct-vllm.<ns>.svc` |
+| vLLM (`llm-service`) | `http://<model-key>-vllm` | `http://<model-key>-vllm.<ns>.svc` |
 | API | `http://general-sim-api:8000` | `http://general-sim-api.general-simulation.svc:8000` |
 
-The umbrella chart under `deploy/helm/general-simulation` is the primary
-install path (`make deploy`). See
-[`deploy/helm/general-simulation/README.md`](deploy/helm/general-simulation/README.md).
+The umbrella chart under [`deploy/helm/`](deploy/helm/) is the primary install path (`make deploy`).
+See [`deploy/helm/README.md`](deploy/helm/README.md).
 
 ---
 
-Raw Kubernetes manifests (pre-Helm) are preserved under `deploy/openshift/` for
-reference.  The Helm charts under `deploy/helm/` are the authoritative
-deployment path going forward.
+Pre-Helm Kubernetes manifests are preserved under `deploy/archived/openshift/`
+for reference.  The Helm chart under `deploy/helm/` is the authoritative deployment path.

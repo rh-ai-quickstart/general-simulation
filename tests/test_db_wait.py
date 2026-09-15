@@ -1,16 +1,16 @@
-"""Unit tests for startup wait helpers in ``src.core.db``."""
+"""Unit tests for startup wait helpers in ``lib.core.db``."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.core.config import Settings
+from lib.core.config import Settings
 
 
 @pytest.mark.asyncio
 async def test_wait_for_pool_retries_then_succeeds():
-    from src.core.db import wait_for_pool
+    from lib.core.db import wait_for_pool
 
     settings = Settings(
         postgres_dsn="postgresql://mock:mock@localhost/mock",
@@ -20,7 +20,7 @@ async def test_wait_for_pool_retries_then_succeeds():
     pool = object()
     create = AsyncMock(side_effect=[ConnectionRefusedError("down"), pool])
 
-    with patch("src.core.db.create_pool", create):
+    with patch("lib.core.db.create_pool", create):
         result = await wait_for_pool(settings)
 
     assert result is pool
@@ -29,7 +29,7 @@ async def test_wait_for_pool_retries_then_succeeds():
 
 @pytest.mark.asyncio
 async def test_wait_for_pool_raises_after_timeout():
-    from src.core.db import wait_for_pool
+    from lib.core.db import wait_for_pool
 
     settings = Settings(
         postgres_dsn="postgresql://mock:mock@localhost/mock",
@@ -38,14 +38,14 @@ async def test_wait_for_pool_raises_after_timeout():
     )
     create = AsyncMock(side_effect=ConnectionRefusedError("down"))
 
-    with patch("src.core.db.create_pool", create):
+    with patch("lib.core.db.create_pool", create):
         with pytest.raises(RuntimeError, match="Postgres unavailable"):
             await wait_for_pool(settings)
 
 
 @pytest.mark.asyncio
 async def test_wait_for_neo4j_retries_then_succeeds():
-    from src.core.db import wait_for_neo4j
+    from lib.core.db import wait_for_neo4j
 
     settings = Settings(
         neo4j_uri="bolt://localhost:7687",
@@ -59,7 +59,7 @@ async def test_wait_for_neo4j_retries_then_succeeds():
     )
     driver.close = AsyncMock()
 
-    with patch("src.core.db.create_neo4j_driver", return_value=driver):
+    with patch("lib.core.db.create_neo4j_driver", return_value=driver):
         result = await wait_for_neo4j(settings)
 
     assert result is driver

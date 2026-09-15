@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.graph.spatial_overlay import (
+from lib.graph.spatial_overlay import (
     UK_AIRSPACE_BBOX,
     format_bbox,
     parse_bbox,
@@ -31,7 +31,7 @@ def test_format_bbox_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_list_entities_in_bbox_queries_postgis() -> None:
-    from src.graph.spatial_overlay import list_entities_in_bbox
+    from lib.graph.spatial_overlay import list_entities_in_bbox
 
     pool = AsyncMock()
     pool.fetch = AsyncMock(
@@ -52,7 +52,7 @@ async def test_list_entities_in_bbox_queries_postgis() -> None:
 
 @pytest.mark.asyncio
 async def test_sync_event_affected_from_bbox_merges_entities() -> None:
-    from src.graph.spatial_overlay import sync_event_affected_from_bbox
+    from lib.graph.spatial_overlay import sync_event_affected_from_bbox
 
     pool = AsyncMock()
     pool.fetch = AsyncMock(

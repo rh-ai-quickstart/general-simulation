@@ -1,0 +1,45 @@
+apiVersion: v2
+name: general-simulation
+description: >
+  Umbrella chart for the General Simulation & Impact-Reasoning Platform.
+  Deploys Postgres (pgvector + PostGIS), Neo4j, Llama Stack, schema bootstrap,
+  the FastAPI API, and the ingestion CronJob. Optional in-cluster vLLM via
+  llm-service (OpenShift AI / KServe).
+
+  Inference always goes through Llama Stack. Enable providers via
+  global.models.<key>.enabled and point api/ingestion model IDs at them.
+
+  Install standalone into any namespace, or consume as a Helm subchart from a
+  parent application (same release namespace as the parent).
+type: application
+version: 1.0.1
+appVersion: "1.0.1"
+keywords:
+  - simulation
+  - neo4j
+  - pgvector
+  - postgis
+  - llama-stack
+home: https://github.com/robertsandoval/general-simulation
+sources:
+  - https://github.com/robertsandoval/general-simulation
+maintainers:
+  - name: general-sim
+
+dependencies:
+  - name: neo4j
+    version: 2026.5.0
+    repository: https://helm.neo4j.com/neo4j
+    condition: neo4j.enabled
+  - name: llama-stack
+    version: 0.8.5
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: llama-stack.enabled
+  - name: llm-service
+    version: 0.5.9
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: llm-service.enabled
+  - name: pgvector
+    version: 0.1.0
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: pgvector.enabled
