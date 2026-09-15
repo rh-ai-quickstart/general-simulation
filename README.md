@@ -468,8 +468,9 @@ Helm chart under [`deploy/helm/`](deploy/helm/) so components can be upgraded in
 
 | Requirement | Notes |
 |---|---|
+| OpenShift project | Create once before deploy: `oc new-project general-simulation` (or `oc project general-simulation` if it already exists). Helm does **not** create the namespace. |
 | OpenShift 4.13+ | Tested against OCP 4.14/4.15 |
-| `oc` CLI logged in | `oc login ...` — needs cluster-admin (or a role covering Deployments, StatefulSets, Services, Routes, Jobs, CronJobs, Secrets, ConfigMaps, ServiceAccounts, and ClusterRoleBindings) |
+| `oc` CLI logged in | `oc login ...` — needs project `edit` or `admin` (Deployments, StatefulSets, Services, Routes, Jobs, CronJobs, Secrets, ConfigMaps, ServiceAccounts, RoleBindings) |
 | `helm` 3.x | [Install Helm](https://helm.sh/docs/intro/install/) |
 | `podman` | To build and push images |
 | Python 3.12 | API image is based on UBI9 `python-312` (`deploy/container_files/api/Containerfile`) |
@@ -484,6 +485,9 @@ Core platform components (Postgres, Neo4j, API, ingestion) need no extra operato
 ### Quick start — full deploy
 
 ```bash
+# 0. Create/switch to the OpenShift project (once; required before make deploy)
+oc new-project general-simulation || oc project general-simulation
+
 # 1. Log in to quay.io so podman can push images
 podman login quay.io
 
@@ -545,7 +549,8 @@ make build REGISTRY=quay.io/myorg TAG=v1.2.3
 ### Step 2 — Deploy (recommended)
 
 Use the single umbrella release — Postgres, Neo4j, bootstrap, Llama Stack, API,
-and ingestion are all in [`deploy/helm/`](deploy/helm/):
+and ingestion are all in [`deploy/helm/`](deploy/helm/). Ensure the OpenShift
+project exists first (`oc new-project general-simulation`).
 
 ```bash
 make deploy
