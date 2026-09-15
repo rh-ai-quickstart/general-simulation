@@ -3,6 +3,7 @@
 # =============================================================================
 #
 # Primary deploy (umbrella = one Helm release):
+#   oc new-project general-simulation   # once; Helm does not create the namespace
 #   cp deploy/helm/values-secrets.yaml.example deploy/helm/values-secrets.yaml  # first time
 #   make build
 #   make deploy
@@ -38,7 +39,7 @@ CHART_VALUES_SECRETS := deploy/helm/values-secrets.yaml
 
 # Common flags passed to every helm command
 HELM_RELEASE_NAME ?= general-simulation
-HELM_COMMON := --namespace $(NAMESPACE) --create-namespace
+HELM_COMMON := --namespace $(NAMESPACE)
 
 # Optional helm --set overrides when image vars are passed on the make command line.
 _helm_image_set :=
@@ -160,15 +161,27 @@ _remove-orphan-neo4j-resources: _guard-oc
 	    fi; \
 	  fi; \
 	done; \
-	crb="$(NAMESPACE)-neo4j-anyuid"; \
-	if oc get clusterrolebinding $$crb >/dev/null 2>&1; then \
-	  owner=$$(oc get clusterrolebinding $$crb \
-	    -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null); \
-	  if [ "$$owner" != "$$rel" ]; then \
-	    echo "    Removing orphan clusterrolebinding/$$crb..."; \
-	    oc delete clusterrolebinding $$crb --ignore-not-found; \
+	for rb in "rolebinding neo4j-anyuid $(NAMESPACE)" \
+	          "clusterrolebinding $(NAMESPACE)-neo4j-anyuid"; do \
+	  set -- $$rb; kind=$$1; name=$$2; ns=$$3; \
+	  if [ "$$kind" = rolebinding ]; then \
+	    oc get $$kind $$name -n $$ns >/dev/null 2>&1 || continue; \
+	    owner=$$(oc get $$kind $$name -n $$ns \
+	      -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null); \
+	  else \
+	    oc get $$kind $$name >/dev/null 2>&1 || continue; \
+	    owner=$$(oc get $$kind $$name \
+	      -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null); \
 	  fi; \
-	fi
+	  if [ "$$owner" != "$$rel" ]; then \
+	    echo "    Removing orphan $$kind/$$name (not owned by Helm release $$rel)..."; \
+	    if [ "$$kind" = rolebinding ]; then \
+	      oc delete $$kind $$name -n $$ns --ignore-not-found; \
+	    else \
+	      oc delete $$kind $$name --ignore-not-found; \
+	    fi; \
+	  fi; \
+	done
 
 # OpenShift Routes — chart uses general-sim-admin; older/manual installs used admin-console.
 _remove-openshift-routes: _guard-oc
@@ -252,9 +265,10 @@ undeploy: _guard-helm _guard-oc _remove-openshift-routes
 	helm uninstall neo4j     --namespace $(NAMESPACE) 2>/dev/null || true
 	helm uninstall postgres  --namespace $(NAMESPACE) 2>/dev/null || true
 	@echo "==> Removing Neo4j anyuid SCC binding + ServiceAccount..."
+	@oc delete rolebinding neo4j-anyuid -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@oc delete clusterrolebinding $(NAMESPACE)-neo4j-anyuid --ignore-not-found >/dev/null
 	@oc delete clusterrolebinding $(NAMESPACE)-postgres-anyuid --ignore-not-found >/dev/null
-	@oc delete serviceaccount neo4j-sa postgres-sa -n $(NAMESPACE) --ignore-not-found >/dev/null
+	@oc delete serviceaccount neo4j-sa -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@oc delete secret neo4j-auth pgvector -n $(NAMESPACE) --ignore-not-found >/dev/null
 	@echo "    Done. PVCs are NOT deleted automatically — remove manually if needed:"
 	@echo "      oc delete pvc -n $(NAMESPACE) --all"

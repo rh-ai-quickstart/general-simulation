@@ -17,11 +17,10 @@ spec:
       labels:
         {{- include "postgres.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: postgres-sa
+      # OpenShift restricted SCC: no fixed runAsUser/fsGroup — the platform assigns
+      # a namespace UID and fsGroup; the postgres image supports arbitrary UID.
       securityContext:
-        runAsUser: 999
         runAsNonRoot: true
-        fsGroup: 999
       containers:
         - name: postgres
           image: {{ include "postgres.containerImage" . }}
@@ -58,7 +57,6 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           securityContext:
-            runAsUser: 999
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

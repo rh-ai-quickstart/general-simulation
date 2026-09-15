@@ -18,7 +18,7 @@ templates/
   bootstrap/           # Schema bootstrap Job
   ingestion/           # CronJob + optional hook Job
   neo4j/               # Secret neo4j-auth, ServiceAccount, SCC binding
-  postgres/            # StatefulSet, Services, init ConfigMap, SCC binding
+  postgres/            # StatefulSet, Services, init ConfigMap
   llamastack-*.yaml    # Llama Stack run-config + pgvector Secret bridge
   _helpers.tpl         # Shared DSN, image, and wait-for helpers
 ```
@@ -26,6 +26,9 @@ templates/
 ## Quick start
 
 ```bash
+# Create/switch to the OpenShift project once (Helm does not create the namespace)
+oc new-project general-simulation || oc project general-simulation
+
 cp deploy/helm/values-secrets.yaml.example deploy/helm/values-secrets.yaml
 # edit deploy/helm/values-secrets.yaml — then:
 make deploy
