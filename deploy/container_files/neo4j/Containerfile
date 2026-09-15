@@ -1,0 +1,23 @@
+# OpenShift-compatible Neo4j image (restricted-v2 / arbitrary namespace UID).
+#
+# Wraps the official Neo4j image and applies the same group-0 + g=u pattern used
+# by general-sim-api and general-sim-postgres so data/logs/plugins are writable
+# when OpenShift overrides the container UID.
+#
+# Build (from repo root):
+#   podman build -f deploy/container_files/neo4j/Containerfile \
+#     -t quay.io/myorg/general-sim-neo4j:latest deploy/container_files/neo4j
+#
+# Pin the upstream tag when upgrading the neo4j Helm subchart.
+ARG NEO4J_BASE=neo4j:5-community
+FROM ${NEO4J_BASE}
+
+USER root
+
+# Paths Neo4j writes at runtime (see official image + compose local volume mounts).
+RUN mkdir -p /data /logs /plugins \
+    && chgrp -R 0 /data /logs /plugins /var/lib/neo4j \
+    && chmod -R g=u /data /logs /plugins /var/lib/neo4j
+
+# OpenShift assigns an arbitrary UID; keep non-root default from base image.
+USER neo4j

@@ -17,7 +17,7 @@ templates/
   api/                 # Deployment, Service, Route, ConfigMap, Secret
   bootstrap/           # Schema bootstrap Job
   ingestion/           # CronJob + optional hook Job
-  neo4j/               # Secret neo4j-auth, ServiceAccount, SCC binding
+  neo4j/               # Secret neo4j-auth; optional SA + SCC binding (legacy anyuid)
   postgres/            # StatefulSet, Services, init ConfigMap
   llamastack-*.yaml    # Llama Stack run-config + pgvector Secret bridge
   _helpers.tpl         # Shared DSN, image, and wait-for helpers
@@ -30,7 +30,8 @@ templates/
 oc new-project general-simulation || oc project general-simulation
 
 cp deploy/helm/values-secrets.yaml.example deploy/helm/values-secrets.yaml
-# edit deploy/helm/values-secrets.yaml — then:
+# edit deploy/helm/values-secrets.yaml — then build (includes general-sim-neo4j) and deploy:
+make build
 make deploy
 ```
 

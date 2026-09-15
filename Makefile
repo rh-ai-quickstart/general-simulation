@@ -24,6 +24,7 @@ NAMESPACE           ?= general-simulation
 TAG                 ?= latest
 APP_IMAGE_NAME      ?= general-sim-api
 POSTGRES_IMAGE_NAME ?= general-sim-postgres
+NEO4J_IMAGE_NAME    ?= general-sim-neo4j
 DEPLOY_TIMEOUT      ?= 25m
 CHART_REPO_URL      ?= https://rh-ai-quickstart.github.io/general-simulation
 LLM_SERVICE_CHART_REPO ?= https://rh-ai-quickstart.github.io/ai-architecture-charts
@@ -32,6 +33,7 @@ LLAMA_STACK_VERSION    ?= 0.8.5
 # ── Derived image references ──────────────────────────────────────────────────
 IMG_POSTGRES := $(REGISTRY)/$(POSTGRES_IMAGE_NAME):$(TAG)
 IMG_APP      := $(REGISTRY)/$(APP_IMAGE_NAME):$(TAG)
+IMG_NEO4J    := $(REGISTRY)/$(NEO4J_IMAGE_NAME):$(TAG)
 
 # ── Helm chart paths ──────────────────────────────────────────────────────────
 CHART_UMBRELLA       := deploy/helm
@@ -40,6 +42,9 @@ CHART_VALUES_SECRETS := deploy/helm/values-secrets.yaml
 # Common flags passed to every helm command
 HELM_RELEASE_NAME ?= general-simulation
 HELM_COMMON := --namespace $(NAMESPACE)
+
+# Neo4j subchart reads image.customImage directly (not global.registry helpers).
+_helm_neo4j_image_set := --set neo4j.image.customImage=$(IMG_NEO4J)
 
 # Optional helm --set overrides when image vars are passed on the make command line.
 _helm_image_set :=
@@ -55,6 +60,9 @@ endif
 ifneq ($(filter command line,$(origin POSTGRES_IMAGE_NAME)),)
   _helm_image_set += --set global.images.postgres=$(POSTGRES_IMAGE_NAME)
 endif
+ifneq ($(filter command line,$(origin NEO4J_IMAGE_NAME)),)
+  _helm_neo4j_image_set := --set neo4j.image.customImage=$(IMG_NEO4J)
+endif
 
 # Stack model ids (providerKey/model.id)
 LOCAL_MODEL_KEY  ?= deepseek-r1-distill-qwen-1-5b
@@ -64,7 +72,7 @@ LOCAL_COMPOSE := deploy/local/composefile.yml
 
 # ── Phony declarations ────────────────────────────────────────────────────────
 .PHONY: all help \
-        build build-postgres build-app \
+        build build-postgres build-neo4j build-app \
         deploy deploy-umbrella neo4j-connect \
         package-chart \
         undeploy status lint-charts test-unit smoke-test \
@@ -95,6 +103,7 @@ help:
 	@printf "\nVariables:\n"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
 	@printf "  %-18s %s\n" "APP_IMAGE_NAME"   "$(APP_IMAGE_NAME)"
+	@printf "  %-18s %s\n" "NEO4J_IMAGE_NAME" "$(NEO4J_IMAGE_NAME)"
 	@printf "  %-18s %s\n" "NAMESPACE"        "$(NAMESPACE)"
 	@printf "  %-18s %s\n" "TAG"              "$(TAG)"
 	@printf "  %-18s %s\n" "DEPLOY_TIMEOUT"   "$(DEPLOY_TIMEOUT)"
@@ -123,8 +132,17 @@ _guard-podman:
 	  { echo "ERROR: 'podman' not found. Install Podman or substitute 'docker' by setting PODMAN=docker."; exit 1; }
 
 # ── Container image builds ────────────────────────────────────────────────────
-build: _guard-podman build-postgres build-app
+build: _guard-podman build-postgres build-neo4j build-app
 	@echo "==> All images built and pushed to $(REGISTRY)."
+
+build-neo4j: _guard-podman
+	@echo "==> Building Neo4j image: $(IMG_NEO4J)"
+	podman build \
+	  --platform=linux/amd64 \
+	  -f deploy/container_files/neo4j/Containerfile \
+	  -t $(IMG_NEO4J) \
+	  deploy/container_files/neo4j
+	podman push $(IMG_NEO4J)
 
 build-postgres: _guard-podman
 	@echo "==> Building Postgres image: $(IMG_POSTGRES)"
@@ -222,6 +240,7 @@ deploy-umbrella: _guard-values-secrets \
 	  $(HELM_COMMON) \
 	  -f $(CHART_VALUES_SECRETS) \
 	  $(_helm_image_set) \
+	  $(_helm_neo4j_image_set) \
 	  --wait --timeout $(DEPLOY_TIMEOUT)
 	@printf "\n==> Deployment complete.\n"
 	@printf "    API (same-NS):  http://general-sim-api:8000\n"

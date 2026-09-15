@@ -6,7 +6,9 @@
 openshift:
   neo4j:
     scc:
-      enabled: true
+      # false: restricted SCC + general-sim-neo4j image (developer self-service).
+      # true: neo4j-sa + anyuid RoleBinding (requires SCC grant escalation).
+      enabled: false
 
 global:
   postgres:
@@ -32,6 +34,21 @@ neo4j:
   enabled: true
   disableLookups: true
   fullnameOverride: neo4j
+  image:
+    customImage: quay.io/rh-ai-quickstart/general-sim-neo4j:latest
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: null
+    runAsGroup: null
+    fsGroup: null
+    fsGroupChangePolicy: null
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: null
+    runAsGroup: null
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
   config:
     server.bolt.advertised_address: ":443"
     server.http.advertised_address: ":443"
@@ -43,8 +60,6 @@ neo4j:
     resources:
       cpu: "2"
       memory: 4Gi
-  podSpec:
-    serviceAccountName: neo4j-sa
   services:
     neo4j:
       enabled: false

@@ -114,7 +114,7 @@ for subchart values.
 | Parent key | Renders | `enabled` guard |
 |------------|---------|-----------------|
 | `postgres` | Inline StatefulSet, Services (`templates/postgres/`) | `postgres.enabled` |
-| `openshift.neo4j` | Inline Secret, SA, SCC (`templates/neo4j/`) | `neo4j.enabled` + `openshift.neo4j.scc.enabled` (SA/SCC) |
+| `openshift.neo4j` | Inline Secret; optional SA + SCC RoleBinding (`templates/neo4j/`) | `neo4j.enabled` + `openshift.neo4j.scc.enabled` (SA/SCC only when true) |
 | `bootstrap` | Inline schema Job (hook) | `bootstrap.enabled` |
 | `api` | Inline Deployment, Service, Route | `api.enabled` |
 | `ingestion` | Inline CronJob + hook Job | `ingestion.enabled` |
@@ -158,8 +158,8 @@ defaults to in-cluster `http://<key>-vllm.<namespace>.svc.cluster.local/v1`.
 | Template | Reads | Creates |
 |----------|-------|---------|
 | [`neo4j/secret.yaml`](../deploy/helm/templates/neo4j/secret.yaml) | `global.neo4j.password` | Secret `neo4j-auth` |
-| [`neo4j/serviceaccount.yaml`](../deploy/helm/templates/neo4j/serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA `neo4j-sa` |
-| [`neo4j/scc-binding.yaml`](../deploy/helm/templates/neo4j/scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC RoleBinding (`anyuid`) |
+| [`neo4j/serviceaccount.yaml`](../deploy/helm/templates/neo4j/serviceaccount.yaml) | `openshift.neo4j.scc.enabled` | OpenShift SA `neo4j-sa` (legacy anyuid path) |
+| [`neo4j/scc-binding.yaml`](../deploy/helm/templates/neo4j/scc-binding.yaml) | `openshift.neo4j.scc.enabled` | SCC RoleBinding (`anyuid`, legacy path) |
 | [`llamastack-pg-secret.yaml`](../deploy/helm/templates/llamastack-pg-secret.yaml) | `global.postgres.*` | Secret `pgvector` |
 | [`llamastack-run-config.yaml`](../deploy/helm/templates/llamastack-run-config.yaml) | `api.models.embedding`, `global.models.*` | ConfigMap `general-sim-llamastack-config` (mounted by llama-stack) |
 

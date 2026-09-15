@@ -507,9 +507,10 @@ Default toggles in [`deploy/helm/values.yaml`](deploy/helm/values.yaml): `ingest
 OpenShift AI unless you disable it).
 
 `make deploy` installs the umbrella chart as a **single Helm release**, creates
-`templates/neo4j/` resources (`neo4j-sa`, anyuid SCC, Secret `neo4j-auth` when
-`openshift.neo4j.scc.enabled`), and wires Llama Stack to enabled `global.models`
-providers.
+Secret `neo4j-auth`, wires Llama Stack to enabled `global.models` providers, and
+deploys Neo4j via the OpenShift-compatible `general-sim-neo4j` image (restricted
+SCC; no admin anyuid grant). Set `openshift.neo4j.scc.enabled: true` only when
+an admin can grant the legacy anyuid RoleBinding.
 
 ---
 
@@ -564,9 +565,10 @@ Component toggles live in [`deploy/helm/values.yaml`](deploy/helm/values.yaml) u
 
 ### Neo4j Browser access
 
-Neo4j is deployed by the umbrella chart (`neo4j.enabled` in `deploy/helm/values.yaml`).
-OpenShift wiring (`neo4j-sa`, SCC, `neo4j-auth`) is rendered from
-`deploy/helm/templates/neo4j/` when `openshift.neo4j.scc.enabled` is true.
+Neo4j is deployed by the umbrella chart (`neo4j.enabled` in `deploy/helm/values.yaml`)
+using the custom `general-sim-neo4j` image for OpenShift restricted SCC. If you
+previously ran Neo4j with UID 7474 (`openshift.neo4j.scc.enabled: true`), delete
+the Neo4j PVC before redeploying so data dirs are re-initialized under the new UID.
 
 For local Browser + Bolt access (Bolt cannot be proxied through a Route):
 
