@@ -10,7 +10,7 @@
 #   podman push quay.io/robertsandoval/general-sim-api:latest
 #
 # Design notes:
-#   - UBI9 Python 3.11 base (Red Hat supported, OCI-compliant).
+#   - UBI9 Python 3.12 base (Red Hat supported, OCI-compliant).
 #   - Multi-stage: build stage compiles deps into a venv; runtime stage is minimal.
 #   - Runs as UID 1001; group 0 has read/execute so OpenShift arbitrary-UID can run.
 #   - No secrets baked in; all config comes from env / mounted secrets.
@@ -24,7 +24,7 @@
 # ── Stage 0: export pinned requirements on the native build platform ──────────
 # $BUILDPLATFORM resolves to the host arch (arm64 on Apple Silicon), so uv
 # runs without QEMU emulation and cannot segfault.
-FROM --platform=$BUILDPLATFORM python:3.11-slim AS deps-gen
+FROM --platform=$BUILDPLATFORM python:3.12-slim AS deps-gen
 
 WORKDIR /gen
 
@@ -38,7 +38,7 @@ RUN uv export --no-dev --frozen --no-hashes -o requirements.txt && \
     sed -i '/^-e /d' requirements.txt
 
 # ── Stage 1: dependency builder ───────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-311:1 AS builder
+FROM registry.access.redhat.com/ubi9/python-312:1 AS builder
 
 # UBI9 Python defaults to user 1001; switch to root for build-time writes.
 USER root
@@ -64,7 +64,7 @@ COPY domain/ ./domain/
 RUN .venv/bin/pip install --no-cache-dir --no-deps .
 
 # ── Stage 2: minimal runtime image ────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-311:1
+FROM registry.access.redhat.com/ubi9/python-312:1
 
 # UBI9 Python defaults to user 1001; need root to chown/chmod the app tree.
 USER root
