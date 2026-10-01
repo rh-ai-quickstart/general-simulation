@@ -331,6 +331,8 @@ tests/
 
 ## Quickstart (local dev)
 
+**Python 3.12+** is required (`requires-python` in `pyproject.toml`; `.python-version` pins `3.12`). Install [uv](https://docs.astral.sh/uv/), then:
+
 ### 1. Install dependencies
 
 ```bash
@@ -470,6 +472,7 @@ Helm chart under [`deploy/helm/`](deploy/helm/) so components can be upgraded in
 | `oc` CLI logged in | `oc login ...` — needs cluster-admin (or a role covering Deployments, StatefulSets, Services, Routes, Jobs, CronJobs, Secrets, ConfigMaps, ServiceAccounts, and ClusterRoleBindings) |
 | `helm` 3.x | [Install Helm](https://helm.sh/docs/intro/install/) |
 | `podman` | To build and push images |
+| Python 3.12 | API image is based on UBI9 `python-312` (`deploy/container_files/api/Containerfile`) |
 | GPU nodes | Required only when enabling `llm-service` on GPU |
 | NVIDIA GPU Operator | Required for GPU `llm-service` device profile |
 | Red Hat OpenShift AI | Required for in-cluster `llm-service` (KServe ServingRuntime / InferenceService) |
