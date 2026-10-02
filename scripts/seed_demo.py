@@ -27,11 +27,14 @@ from datetime import datetime, timezone
 from neo4j import AsyncGraphDatabase
 
 from lib.core.config import Settings
-from lib.core.db import create_pool
 from lib.core.ingestion import CanonicalEntity
 from lib.graph.nodes import EDGE_CARRIES
 from lib.graph.spatial_overlay import UK_AIRSPACE_BBOX, format_bbox
-from lib.ingestion.runner import _insert_state, _upsert_entity
+from lib.seed.writers import (
+    inject_scenarios,
+    sync_scenario_overlays,
+    upsert_entities_to_postgres,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s — %(message)s")
 logger = logging.getLogger(__name__)
@@ -52,6 +55,8 @@ AIRCRAFT = [
         "lon": -0.55,
         "lat": 51.48,
         "revenue_usd": 620_000.0,
+        "promised_delivery_utc": "2026-09-16T14:00:00Z",
+        "eta_utc": "2026-09-16T13:30:00Z",
     },
     {
         "id": "opensky-3c6444",
@@ -102,6 +107,8 @@ AIRCRAFT = [
         "lon": -0.70,
         "lat": 51.55,
         "revenue_usd": 580_000.0,
+        "promised_delivery_utc": "2026-09-16T16:00:00Z",
+        "eta_utc": "2026-09-16T17:00:00Z",
     },
     {
         "id": "opensky-40617d",
@@ -288,6 +295,8 @@ VESSELS = [
         "lat": 32.8,
         "revenue_usd": 890_000.0,
         "depends_on_port": "port-los-angeles",
+        "promised_delivery_utc": "2026-09-18T12:00:00Z",
+        "eta_utc": "2026-09-18T10:00:00Z",
     },
     {
         "id": "vessel-westbound-express",
@@ -298,6 +307,8 @@ VESSELS = [
         "lat": 31.5,
         "revenue_usd": 720_000.0,
         "depends_on_port": "port-long-beach",
+        "promised_delivery_utc": "2026-09-19T08:00:00Z",
+        "eta_utc": "2026-09-19T09:30:00Z",
     },
     {
         "id": "vessel-red-sea-carrier",
@@ -308,6 +319,8 @@ VESSELS = [
         "lat": 28.8,
         "revenue_usd": 1_450_000.0,
         "depends_on_port": "port-suez",
+        "promised_delivery_utc": "2026-09-22T06:00:00Z",
+        "eta_utc": "2026-09-22T06:00:00Z",
     },
     {
         "id": "vessel-med-link",
@@ -318,6 +331,228 @@ VESSELS = [
         "lat": 30.1,
         "revenue_usd": 980_000.0,
         "depends_on_port": "port-suez",
+        "promised_delivery_utc": "2026-09-21T18:00:00Z",
+        "eta_utc": "2026-09-24T12:00:00Z",
+    },
+]
+
+# Warehouse SKU inventory for KPI demos (no geometry — queried via /admin/entities).
+INVENTORY_SKUS: list[dict] = [
+    {
+        "id": "sku-elec-8842",
+        "sku": "ELEC-8842",
+        "commodity": "electronics",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 420,
+        "safety_stock": 50,
+        "reorder_point": 80,
+        "unit_price_usd": 1200.0,
+        "avg_daily_sales_30d": 12.5,
+        "linked_carrier_ids": ["vessel-pacific-star", "opensky-a4e301"],
+    },
+    {
+        "id": "sku-auto-2201",
+        "sku": "AUTO-2201",
+        "commodity": "automotive_parts",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 180,
+        "safety_stock": 40,
+        "reorder_point": 60,
+        "unit_price_usd": 850.0,
+        "avg_daily_sales_30d": 8.0,
+        "linked_carrier_ids": ["vessel-pacific-star"],
+    },
+    {
+        "id": "sku-app-5510",
+        "sku": "APP-5510",
+        "commodity": "apparel",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 920,
+        "safety_stock": 120,
+        "reorder_point": 200,
+        "unit_price_usd": 85.0,
+        "avg_daily_sales_30d": 45.0,
+        "linked_carrier_ids": ["vessel-westbound-express"],
+    },
+    {
+        "id": "sku-pharma-102",
+        "sku": "PHARMA-102",
+        "commodity": "pharmaceuticals",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 65,
+        "safety_stock": 30,
+        "reorder_point": 35,
+        "unit_price_usd": 8500.0,
+        "avg_daily_sales_30d": 2.1,
+        "linked_carrier_ids": ["opensky-407290", "opensky-a4e301"],
+    },
+    {
+        "id": "sku-home-3300",
+        "sku": "HOME-3300",
+        "commodity": "home_goods",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 310,
+        "safety_stock": 60,
+        "reorder_point": 90,
+        "unit_price_usd": 220.0,
+        "avg_daily_sales_30d": 18.0,
+        "linked_carrier_ids": ["opensky-a19ce0"],
+    },
+    {
+        "id": "sku-perish-771",
+        "sku": "PERISH-771",
+        "commodity": "perishables",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 42,
+        "safety_stock": 25,
+        "reorder_point": 30,
+        "unit_price_usd": 950.0,
+        "avg_daily_sales_30d": 6.5,
+        "linked_carrier_ids": ["opensky-a19ce0", "vessel-westbound-express"],
+    },
+    {
+        "id": "sku-semi-9001",
+        "sku": "SEMI-9001",
+        "commodity": "semiconductors",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 28,
+        "safety_stock": 15,
+        "reorder_point": 18,
+        "unit_price_usd": 9800.0,
+        "avg_daily_sales_30d": 1.2,
+        "linked_carrier_ids": ["vessel-pacific-star"],
+    },
+    {
+        "id": "sku-wine-204",
+        "sku": "WINE-204",
+        "commodity": "wine",
+        "warehouse_id": "warehouse-inland-empire",
+        "on_hand_qty": 540,
+        "safety_stock": 80,
+        "reorder_point": 120,
+        "unit_price_usd": 160.0,
+        "avg_daily_sales_30d": 22.0,
+        "linked_carrier_ids": ["vessel-westbound-express"],
+    },
+    {
+        "id": "sku-eu-elec-441",
+        "sku": "EU-ELEC-441",
+        "commodity": "electronics",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 260,
+        "safety_stock": 45,
+        "reorder_point": 70,
+        "unit_price_usd": 1400.0,
+        "avg_daily_sales_30d": 9.5,
+        "linked_carrier_ids": ["vessel-red-sea-carrier", "opensky-75804b"],
+    },
+    {
+        "id": "sku-eu-auto-118",
+        "sku": "EU-AUTO-118",
+        "commodity": "automotive_parts",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 140,
+        "safety_stock": 35,
+        "reorder_point": 50,
+        "unit_price_usd": 2100.0,
+        "avg_daily_sales_30d": 5.8,
+        "linked_carrier_ids": ["vessel-red-sea-carrier"],
+    },
+    {
+        "id": "sku-eu-pharma-55",
+        "sku": "EU-PHARMA-55",
+        "commodity": "pharmaceuticals",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 38,
+        "safety_stock": 20,
+        "reorder_point": 22,
+        "unit_price_usd": 9200.0,
+        "avg_daily_sales_30d": 1.4,
+        "linked_carrier_ids": ["vessel-med-link", "opensky-8961e2"],
+    },
+    {
+        "id": "sku-eu-lux-88",
+        "sku": "EU-LUX-88",
+        "commodity": "luxury_goods",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 72,
+        "safety_stock": 18,
+        "reorder_point": 25,
+        "unit_price_usd": 5600.0,
+        "avg_daily_sales_30d": 2.8,
+        "linked_carrier_ids": ["opensky-75804b"],
+    },
+    {
+        "id": "sku-eu-chem-12",
+        "sku": "EU-CHEM-12",
+        "commodity": "industrial_chemicals",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 190,
+        "safety_stock": 50,
+        "reorder_point": 65,
+        "unit_price_usd": 750.0,
+        "avg_daily_sales_30d": 7.2,
+        "linked_carrier_ids": ["vessel-med-link"],
+    },
+    {
+        "id": "sku-uk-pharma-7",
+        "sku": "UK-PHARMA-7",
+        "commodity": "pharmaceuticals",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 55,
+        "safety_stock": 25,
+        "reorder_point": 30,
+        "unit_price_usd": 7800.0,
+        "avg_daily_sales_30d": 1.8,
+        "linked_carrier_ids": ["opensky-407290", "opensky-471f52"],
+    },
+    {
+        "id": "sku-uk-app-19",
+        "sku": "UK-APP-19",
+        "commodity": "apparel",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 480,
+        "safety_stock": 90,
+        "reorder_point": 130,
+        "unit_price_usd": 95.0,
+        "avg_daily_sales_30d": 28.0,
+        "linked_carrier_ids": ["opensky-484161"],
+    },
+    {
+        "id": "sku-uk-elec-3",
+        "sku": "UK-ELEC-3",
+        "commodity": "electronics",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 115,
+        "safety_stock": 30,
+        "reorder_point": 40,
+        "unit_price_usd": 1100.0,
+        "avg_daily_sales_30d": 6.2,
+        "linked_carrier_ids": ["opensky-3c6444", "opensky-4ca87e"],
+    },
+    {
+        "id": "sku-uk-med-44",
+        "sku": "UK-MED-44",
+        "commodity": "medical_devices",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 24,
+        "safety_stock": 12,
+        "reorder_point": 14,
+        "unit_price_usd": 15000.0,
+        "avg_daily_sales_30d": 0.9,
+        "linked_carrier_ids": ["opensky-4ca87e"],
+    },
+    {
+        "id": "sku-uk-wine-8",
+        "sku": "UK-WINE-8",
+        "commodity": "wine",
+        "warehouse_id": "port-rotterdam",
+        "on_hand_qty": 360,
+        "safety_stock": 70,
+        "reorder_point": 95,
+        "unit_price_usd": 170.0,
+        "avg_daily_sales_30d": 15.0,
+        "linked_carrier_ids": ["opensky-40617d"],
     },
 ]
 
@@ -333,6 +568,8 @@ CORRIDOR_AIRCRAFT = [
         "lat": 33.95,
         "revenue_usd": 410_000.0,
         "depends_on_port": "port-los-angeles",
+        "promised_delivery_utc": "2026-09-17T10:00:00Z",
+        "eta_utc": "2026-09-17T09:00:00Z",
     },
     {
         "id": "opensky-a19ce0",
@@ -344,6 +581,8 @@ CORRIDOR_AIRCRAFT = [
         "lat": 33.82,
         "revenue_usd": 365_000.0,
         "depends_on_port": "port-long-beach",
+        "promised_delivery_utc": "2026-09-17T12:00:00Z",
+        "eta_utc": "2026-09-17T14:00:00Z",
     },
     {
         "id": "opensky-8961e2",
@@ -516,6 +755,8 @@ DEPENDENCIES = [
     ("opensky-a19ce0", "warehouse-inland-empire"),
 ]
 
+SKU_DEPENDENCIES = [(sku["id"], sku["warehouse_id"]) for sku in INVENTORY_SKUS]
+
 # Scenario IDs match ai-supply-chain-agent frontend presets
 # (Port Strike LA, Suez Blockage, Trigger World Event / UK closure).
 SCENARIOS = [
@@ -565,133 +806,134 @@ EVENT_ID = SCENARIOS[0]["event_id"]
 EVENT_DESCRIPTION = SCENARIOS[0]["description"]
 
 
+def _build_demo_entities(now: datetime) -> list[CanonicalEntity]:
+    """Build CanonicalEntity records for the full demo dataset."""
+    all_aircraft = AIRCRAFT + CORRIDOR_AIRCRAFT
+    all_cargo = CARGO + MARITIME_CARGO + CORRIDOR_CARGO
+    entities: list[CanonicalEntity] = []
+
+    for ac in all_aircraft:
+        attrs = {
+            "call_sign": ac["callsign"],
+            "origin_country": ac["origin"],
+            "route": ac["route"],
+            "revenue_usd": ac["revenue_usd"],
+        }
+        if ac.get("depends_on_port"):
+            attrs["depends_on_port"] = ac["depends_on_port"]
+        if ac.get("promised_delivery_utc"):
+            attrs["promised_delivery_utc"] = ac["promised_delivery_utc"]
+        if ac.get("eta_utc"):
+            attrs["eta_utc"] = ac["eta_utc"]
+        entities.append(
+            CanonicalEntity(
+                id=ac["id"],
+                type="moving_entity",
+                timestamp=now,
+                status=ac["status"],
+                geometry={"type": "Point", "coordinates": [ac["lon"], ac["lat"]]},
+                attributes=attrs,
+            )
+        )
+
+    for facility in FACILITIES:
+        entities.append(
+            CanonicalEntity(
+                id=facility["id"],
+                type="facility",
+                timestamp=now,
+                status="operational",
+                geometry={
+                    "type": "Point",
+                    "coordinates": [facility["lon"], facility["lat"]],
+                },
+                attributes={
+                    "name": facility["name"],
+                    "region": facility["region"],
+                    "value_usd": facility["value_usd"],
+                },
+            )
+        )
+
+    for vessel in VESSELS:
+        entities.append(
+            CanonicalEntity(
+                id=vessel["id"],
+                type="moving_entity",
+                timestamp=now,
+                status=vessel["status"],
+                geometry={
+                    "type": "Point",
+                    "coordinates": [vessel["lon"], vessel["lat"]],
+                },
+                attributes={
+                    "name": vessel["name"],
+                    "route": vessel["route"],
+                    "revenue_usd": vessel["revenue_usd"],
+                    "depends_on_port": vessel["depends_on_port"],
+                    "promised_delivery_utc": vessel.get("promised_delivery_utc"),
+                    "eta_utc": vessel.get("eta_utc"),
+                },
+            )
+        )
+
+    for item in all_cargo:
+        entities.append(
+            CanonicalEntity(
+                id=item["id"],
+                type="cargo_item",
+                timestamp=now,
+                status="in_transit",
+                geometry=None,
+                attributes={
+                    "commodity": item["commodity"],
+                    "quantity": item["quantity"],
+                    "unit_price_usd": item["unit_price_usd"],
+                    "value_usd": item["value_usd"],
+                    "carrier_id": item["carrier_id"],
+                },
+            )
+        )
+
+    for sku in INVENTORY_SKUS:
+        entities.append(
+            CanonicalEntity(
+                id=sku["id"],
+                type="inventory_sku",
+                timestamp=now,
+                status="in_stock",
+                geometry=None,
+                attributes={
+                    "sku": sku["sku"],
+                    "commodity": sku["commodity"],
+                    "warehouse_id": sku["warehouse_id"],
+                    "on_hand_qty": sku["on_hand_qty"],
+                    "safety_stock": sku["safety_stock"],
+                    "reorder_point": sku["reorder_point"],
+                    "unit_price_usd": sku["unit_price_usd"],
+                    "avg_daily_sales_30d": sku["avg_daily_sales_30d"],
+                    "linked_carrier_ids": sku["linked_carrier_ids"],
+                },
+            )
+        )
+
+    return entities
+
+
 async def _seed_postgres(settings: Settings) -> None:
     """Upsert demo aircraft, facilities, vessels, and cargo into PostGIS live store."""
     all_aircraft = AIRCRAFT + CORRIDOR_AIRCRAFT
     all_cargo = CARGO + MARITIME_CARGO + CORRIDOR_CARGO
     logger.info(
-        "Upserting %d aircraft + %d facilities + %d vessels + %d cargo into Postgres …",
+        "Upserting %d aircraft + %d facilities + %d vessels + %d cargo + %d SKUs into Postgres …",
         len(all_aircraft),
         len(FACILITIES),
         len(VESSELS),
         len(all_cargo),
+        len(INVENTORY_SKUS),
     )
-    pool = await create_pool(settings)
     now = datetime.now(tz=timezone.utc)
-    try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                for ac in all_aircraft:
-                    attrs = {
-                        "call_sign": ac["callsign"],
-                        "origin_country": ac["origin"],
-                        "route": ac["route"],
-                        "revenue_usd": ac["revenue_usd"],
-                    }
-                    if ac.get("depends_on_port"):
-                        attrs["depends_on_port"] = ac["depends_on_port"]
-                    entity = CanonicalEntity(
-                        id=ac["id"],
-                        type="moving_entity",
-                        timestamp=now,
-                        status=ac["status"],
-                        geometry={
-                            "type": "Point",
-                            "coordinates": [ac["lon"], ac["lat"]],
-                        },
-                        attributes=attrs,
-                    )
-                    await _upsert_entity(conn, entity)
-                    await _insert_state(conn, entity)
-                    logger.info(
-                        "  ✓ %s (%s) @ %.2f,%.2f revenue=$%.0f",
-                        ac["id"],
-                        ac["callsign"],
-                        ac["lon"],
-                        ac["lat"],
-                        ac["revenue_usd"],
-                    )
-
-                for facility in FACILITIES:
-                    entity = CanonicalEntity(
-                        id=facility["id"],
-                        type="facility",
-                        timestamp=now,
-                        status="operational",
-                        geometry={
-                            "type": "Point",
-                            "coordinates": [facility["lon"], facility["lat"]],
-                        },
-                        attributes={
-                            "name": facility["name"],
-                            "region": facility["region"],
-                            "value_usd": facility["value_usd"],
-                        },
-                    )
-                    await _upsert_entity(conn, entity)
-                    await _insert_state(conn, entity)
-                    logger.info(
-                        "  ✓ %s (%s) value=$%.0f",
-                        facility["id"],
-                        facility["name"],
-                        facility["value_usd"],
-                    )
-
-                for vessel in VESSELS:
-                    entity = CanonicalEntity(
-                        id=vessel["id"],
-                        type="moving_entity",
-                        timestamp=now,
-                        status=vessel["status"],
-                        geometry={
-                            "type": "Point",
-                            "coordinates": [vessel["lon"], vessel["lat"]],
-                        },
-                        attributes={
-                            "name": vessel["name"],
-                            "route": vessel["route"],
-                            "revenue_usd": vessel["revenue_usd"],
-                            "depends_on_port": vessel["depends_on_port"],
-                        },
-                    )
-                    await _upsert_entity(conn, entity)
-                    await _insert_state(conn, entity)
-                    logger.info(
-                        "  ✓ %s (%s) @ %.2f,%.2f revenue=$%.0f",
-                        vessel["id"],
-                        vessel["name"],
-                        vessel["lon"],
-                        vessel["lat"],
-                        vessel["revenue_usd"],
-                    )
-
-                for item in all_cargo:
-                    entity = CanonicalEntity(
-                        id=item["id"],
-                        type="cargo_item",
-                        timestamp=now,
-                        status="in_transit",
-                        geometry=None,
-                        attributes={
-                            "commodity": item["commodity"],
-                            "quantity": item["quantity"],
-                            "unit_price_usd": item["unit_price_usd"],
-                            "value_usd": item["value_usd"],
-                            "carrier_id": item["carrier_id"],
-                        },
-                    )
-                    await _upsert_entity(conn, entity)
-                    await _insert_state(conn, entity)
-                    logger.info(
-                        "  ✓ %s (%s) value=$%.0f on %s",
-                        item["id"],
-                        item["commodity"],
-                        item["value_usd"],
-                        item["carrier_id"],
-                    )
-    finally:
-        await pool.close()
-    logger.info("Postgres seed complete.")
+    await upsert_entities_to_postgres(settings, _build_demo_entities(now))
 
 
 async def _seed_neo4j(settings: Settings) -> None:
@@ -783,8 +1025,31 @@ async def _seed_neo4j(settings: Settings) -> None:
                     item["id"],
                 )
 
-            logger.info("Wiring %d dependency edges …", len(DEPENDENCIES))
-            for from_id, to_id in DEPENDENCIES:
+            logger.info("Creating %d inventory SKU Entity nodes …", len(INVENTORY_SKUS))
+            for sku in INVENTORY_SKUS:
+                await session.run(
+                    "MERGE (n:Entity {id: $id}) "
+                    "SET n.type = $type, n.sku = $sku, n.commodity = $commodity, "
+                    "    n.warehouse_id = $warehouse_id, n.on_hand_qty = $on_hand_qty, "
+                    "    n.safety_stock = $safety_stock, n.reorder_point = $reorder_point, "
+                    "    n.unit_price_usd = $unit_price_usd, "
+                    "    n.avg_daily_sales_30d = $avg_daily_sales_30d",
+                    id=sku["id"],
+                    type="inventory_sku",
+                    sku=sku["sku"],
+                    commodity=sku["commodity"],
+                    warehouse_id=sku["warehouse_id"],
+                    on_hand_qty=sku["on_hand_qty"],
+                    safety_stock=sku["safety_stock"],
+                    reorder_point=sku["reorder_point"],
+                    unit_price_usd=sku["unit_price_usd"],
+                    avg_daily_sales_30d=sku["avg_daily_sales_30d"],
+                )
+                logger.info("  ✓ %s (%s)", sku["id"], sku["sku"])
+
+            all_dependencies = DEPENDENCIES + SKU_DEPENDENCIES
+            logger.info("Wiring %d dependency edges …", len(all_dependencies))
+            for from_id, to_id in all_dependencies:
                 await session.run(
                     "MATCH (a:Entity {id: $from_id}), (b:Entity {id: $to_id}) "
                     "MERGE (a)-[:DEPENDS_ON]->(b)",
@@ -793,53 +1058,8 @@ async def _seed_neo4j(settings: Settings) -> None:
                 )
                 logger.info("  ✓ %s → %s", from_id, to_id)
 
-            logger.info("Injecting %d SimulationEvent overlays …", len(SCENARIOS))
-            for scenario in SCENARIOS:
-                await session.run(
-                    "MERGE (e:SimulationEvent {id: $id}) "
-                    "SET e.scenario_id = $scenario_id, "
-                    "    e.description = $description, "
-                    "    e.affect_bbox = $bbox",
-                    id=scenario["event_id"],
-                    scenario_id=scenario["scenario_id"],
-                    description=scenario["description"][:200],
-                    bbox=scenario["bbox"],
-                )
-                logger.info(
-                    "  ✓ %s (%s) affect_bbox=%s",
-                    scenario["event_id"],
-                    scenario["scenario_id"],
-                    scenario["bbox"],
-                )
     finally:
         await driver.close()
-
-
-async def _sync_spatial_overlay(settings: Settings) -> None:
-    """Wire AFFECTED_BY from live PostGIS entities inside each scenario bbox."""
-    from lib.graph.spatial_overlay import sync_event_affected_from_bbox
-
-    pool = await create_pool(settings)
-    driver = AsyncGraphDatabase.driver(
-        settings.neo4j_uri,
-        auth=(settings.neo4j_user, settings.neo4j_password),
-    )
-    try:
-        for scenario in SCENARIOS:
-            affected = await sync_event_affected_from_bbox(
-                driver,
-                pool,
-                event_id=scenario["event_id"],
-                bbox=scenario["bbox"],
-            )
-            logger.info(
-                "Spatial overlay synced: %d live entities affected in scenario '%s'.",
-                len(affected),
-                scenario["scenario_id"],
-            )
-    finally:
-        await driver.close()
-        await pool.close()
 
 
 async def main() -> None:
@@ -852,7 +1072,8 @@ async def main() -> None:
 
     await _seed_postgres(settings)
     await _seed_neo4j(settings)
-    await _sync_spatial_overlay(settings)
+    await inject_scenarios(settings, SCENARIOS)
+    await sync_scenario_overlays(settings, SCENARIOS)
 
     logger.info("\nSeeded scenarios (match supply-chain frontend presets):")
     for scenario in SCENARIOS:
