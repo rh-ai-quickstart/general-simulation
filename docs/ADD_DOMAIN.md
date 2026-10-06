@@ -10,7 +10,7 @@ manufacturing — without changing core platform logic.
 > plus one catalog entry. Loading is controlled by `ENABLED_DOMAINS`.
 
 Using Cursor? Paste the staged prompts in
-[docs/prompts/add-domain/README.md](docs/prompts/add-domain/README.md)
+[ADD_DOMAIN_PROMPT.md](ADD_DOMAIN_PROMPT.md)
 (Prompt 0 → 1 → …) and keep this file as the human checklist.
 
 ---
@@ -287,8 +287,18 @@ follow the `shipping_demo` fixture + `tests/test_ingestion.py` pattern.
 ### Step 4 — Wire the dependency graph (optional but recommended)
 
 The dependency graph (Neo4j) captures which entities depend on which.
-Wire it once at setup time (script or Job), not inside the adapter. Use
-helpers in `lib/graph/nodes.py`:
+Wire it once at setup time (script or Job), not inside the adapter.
+
+**Prefer the shipping pattern:** put MERGE logic in
+`domain/<name>/bootstrap_graph.py` and a thin runner in
+`scripts/seed_<name>.py`. See:
+
+- `domain/shipping/bootstrap_graph.py` — `DEPENDS_ON` / `FEEDS` / `CARRIES` plus
+  an optional simulation-event / spatial overlay
+- `scripts/seed_shipping.py` — CLI that ingests then bootstraps the graph
+
+Use helpers in `lib/graph/nodes.py` (`create_entity_node`,
+`create_dependency_edge`, `EDGE_*`). Sketch:
 
 ```python
 import asyncio
@@ -314,6 +324,9 @@ async def bootstrap_flight_graph():
 
 asyncio.run(bootstrap_flight_graph())
 ```
+
+(`scripts/seed_demo.py` is a large aviation demo seed — useful for end-to-end
+smoke tests, not the template for a new domain package.)
 
 After ingestion, live entities appear in Postgres; add edges from those ids to
 infrastructure nodes as needed. Stage 1 traversal picks them up automatically.
@@ -391,11 +404,23 @@ No hard-coded swap in `app.py` is required.
 
 ### Step 6 — Deploy / schedule ingestion
 
-Set `ENABLED_DOMAINS` (or Helm `enabledDomains`) so the domain package loads,
-and set the CronJob `adapterId` to the adapter this job should run:
+Set `ENABLED_DOMAINS` so the domain package loads, and point the CronJob at the
+adapter this job should run.
+
+Domain keys are **optional** in `deploy/helm/values.yaml` — defaults live in
+`deploy/helm/templates/_helpers.tpl`:
+
+| Key | Helper default |
+|---|---|
+| `api.enabledDomains` | `aviation,shipping` |
+| `ingestion.enabledDomains` | same as `api.enabledDomains` |
+| `ingestion.adapterId` | `opensky_flights` |
+
+`deploy/helm/values.yaml` currently sets `ingestion.enabled: false` (CronJob
+off until you enable it). Explicit values or `--set`:
 
 ```yaml
-# deploy/helm/values.yaml
+# deploy/helm/values.yaml (optional overrides)
 api:
   enabledDomains: aviation
 ingestion:
@@ -404,11 +429,25 @@ ingestion:
   enabledDomains: aviation
 ```
 
+```bash
+helm upgrade --install ... \
+  --set api.enabledDomains=aviation \
+  --set ingestion.enabled=true \
+  --set ingestion.adapterId=opensky_flights \
+  --set ingestion.enabledDomains=aviation
+```
+
 For a second adapter on a different schedule, add another CronJob (or Helm
 release) with the same `enabledDomains` and a different `adapterId`.
 
-Helm values (`deploy/helm/values.yaml` under `api:` and `ingestion:`, e.g. `enabledDomains`,
-`adapterId`) carry `ENABLED_DOMAINS` for deployed workloads.
+**Operator smoke (local or deployed API):**
+
+```bash
+uv run ingest-run --adapter opensky_flights
+# or via admin (same ENABLED_DOMAINS filter):
+# GET  /admin/ingestion/adapters
+# POST /admin/ingestion/run   # body includes adapter_id
+```
 
 ---
 
@@ -425,12 +464,15 @@ New domain = these files only:
   UPDATE  lib/ingestion/registry.py                   ← DomainSpec (+ adapters)
   UPDATE  tests/test_registry.py                      ← assert catalog entry
   SET     ENABLED_DOMAINS=<name>                      ← .env / Helm / ConfigMap
+  CREATE  domain/<name>/bootstrap_graph.py            ← (optional) Neo4j wiring
+  CREATE  scripts/seed_<name>.py                      ← (optional) thin seed CLI
   CREATE  domain/<name>/solver.py                     ← (optional) real solver
-  UPDATE  deploy/helm/values.yaml (ingestion.adapterId + ingestion.enabledDomains)
+  SET/UPDATE Helm api.enabledDomains + ingestion.adapterId / enabledDomains
+        (values.yaml and/or --set; defaults in templates/_helpers.tpl)
 ```
 
 Cursor paste-prompts for the same checklist:
-[docs/prompts/add-domain/README.md](docs/prompts/add-domain/README.md).
+[ADD_DOMAIN_PROMPT.md](ADD_DOMAIN_PROMPT.md).
 
 **Files you normally never touch for domain logic:**
 

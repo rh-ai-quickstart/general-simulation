@@ -1,7 +1,7 @@
 # Cursor prompts: add a domain
 
 Paste these into Cursor **one at a time** (Prompt 0 → 1 → …). Fill in the
-`<placeholders>` before sending. Keep [ADD_DOMAIN.md](../../../ADD_DOMAIN.md)
+`<placeholders>` before sending. Keep [ADD_DOMAIN.md](ADD_DOMAIN.md)
 open as the human checklist — these prompts drive an agent through the same
 steps without rewriting core platform code.
 
@@ -14,7 +14,8 @@ steps without rewriting core platform code.
 - Tests must be offline (fixture + `normalize`, no live network/DB)
 
 Reference implementations: `domain/shipping/adapters/shipping_demo.py`,
-`tests/fixtures/shipping_demo.json`, `tests/test_ingestion.py`.
+`domain/shipping/bootstrap_graph.py`, `tests/fixtures/shipping_demo.json`,
+`tests/test_ingestion.py`.
 
 ---
 
@@ -24,18 +25,22 @@ Reference implementations: `domain/shipping/adapters/shipping_demo.py`,
 You are helping me add a new domain to this simulation platform.
 
 Read and summarize (do not edit yet):
-- ADD_DOMAIN.md
+- docs/ADD_DOMAIN.md
 - README.md sections on ingestion and "Why the same design serves multiple domains"
 - domain/aviation/ and domain/shipping/ as reference packages
+  (prefer shipping: adapter + bootstrap_graph.py + scripts/seed_shipping.py)
 - lib/ingestion/registry.py
 - lib/core/ingestion.py
 - lib/core/config.py (enabled_domains)
 - tests/test_registry.py and tests/test_ingestion.py
+- deploy/helm/templates/_helpers.tpl (api.enabledDomains, ingestion.adapterId,
+  ingestion.enabledDomains defaults — values.yaml may omit these keys)
 
 Then answer:
 1. Exact file checklist for a new domain named <DOMAIN_ID>
 2. What must NOT be changed in lib/core, lib/reasoning, lib/graph, lib/ingestion/runner.py
 3. How ENABLED_DOMAINS and adapter_id interact
+4. How Helm picks enabledDomains / adapterId when values.yaml leaves them unset
 
 Wait for my domain description before writing code.
 ```
@@ -117,16 +122,22 @@ Run: uv run pytest tests/test_registry.py tests/test_<adapter_id>.py -v
 ```text
 Wire a minimal Neo4j dependency graph for domain <DOMAIN_ID>.
 
-Read lib/graph/nodes.py (create_entity_node, create_dependency_edge, EDGE_*).
-Read scripts/seed_demo.py only as a pattern — do not aviation-hardcode in core.
+Primary pattern (prefer this):
+- domain/shipping/bootstrap_graph.py — MERGE edges + optional scenario overlay
+- scripts/seed_shipping.py — thin CLI that calls the domain bootstrap after ingest
 
-Create domain/<DOMAIN_ID>/bootstrap_graph.py (or scripts/seed_<DOMAIN_ID>.py) that:
-- Creates a few fixed infrastructure Entity nodes
+Also read:
+- lib/graph/nodes.py (create_entity_node, create_dependency_edge, EDGE_*)
+- scripts/seed_demo.py only as a large aviation demo — do not aviation-hardcode in core
+
+Create domain/<DOMAIN_ID>/bootstrap_graph.py plus an optional scripts/seed_<DOMAIN_ID>.py that:
+- Creates a few fixed infrastructure Entity nodes (or links to ids the adapter already upserts)
 - Creates DEPENDS_ON / FEEDS / CARRIES edges as appropriate
 - Documents how ingested live entity ids should connect to those nodes
-- Is idempotent where practical
+- Is idempotent where practical (MERGE-style helpers)
+- Optionally injects a simulation event / spatial overlay (see shipping bootstrap)
 
-Do not mutate live PostGIS from this script unless seeding demo geometries
+Do not mutate live PostGIS from the graph bootstrap unless seeding demo geometries
 is explicitly required. Explain how Stage-1 traversal will use these edges.
 ```
 
@@ -137,7 +148,8 @@ is explicitly required. Explain how Stage-1 traversal will use these edges.
 ```text
 Add an optional Stage-2 solver for <DOMAIN_ID>.
 
-Read lib/core/solver.py (Solver protocol, AffectedSubgraph, LiveState, SolverResult)
+Read lib/core/solver.py (Solver protocol, AffectedSubgraph, LiveState, SolverResult —
+including total_value_at_risk / recommended_reroutes if you use them)
 and lib/solver/stub.py. Neither aviation nor shipping ships a solver today —
 StubSolver is the fallback.
 
@@ -159,17 +171,26 @@ Wire runtime config so this domain can run in local + Helm paths.
 
 1. Document .env:
    ENABLED_DOMAINS=<DOMAIN_ID>
-   # or comma-join with aviation if needed
+   # or comma-join with aviation,shipping if needed
 2. Show CLI: uv run ingest-run --adapter <adapter_id>
-3. Update `deploy/helm/values.yaml` (`ingestion:` and `api:` sections) OR
-   document the --set overrides:
-   enabledDomains=<DOMAIN_ID>
-   adapterId=<adapter_id>
-4. Mention `deploy/helm/values.yaml` (`api.enabledDomains`, `ingestion.adapterId`, `ingestion.enabledDomains`)
-   `enabledDomains` if relevant
-5. Do not invent new CronJob templates unless multiple adapters need different schedules
+3. Helm: domain keys are optional in deploy/helm/values.yaml — defaults live in
+   deploy/helm/templates/_helpers.tpl:
+   - api.enabledDomains default: aviation,shipping
+   - ingestion.adapterId default: opensky_flights
+   - ingestion.enabledDomains default: same as api.enabledDomains
+   - ingestion.enabled default in values.yaml: false (CronJob off until enabled)
+   Either set keys under api: / ingestion: in values.yaml OR document --set:
+     --set api.enabledDomains=<DOMAIN_ID>
+     --set ingestion.enabled=true
+     --set ingestion.adapterId=<adapter_id>
+     --set ingestion.enabledDomains=<DOMAIN_ID>
+4. Do not invent new CronJob templates unless multiple adapters need different schedules
+5. Mention admin smoke paths (same ENABLED_DOMAINS):
+   GET /admin/ingestion/adapters
+   POST /admin/ingestion/run  (body includes adapter_id)
 
-End with a short "smoke test" checklist for a human operator.
+End with a short "smoke test" checklist for a human operator
+(local ingest-run, optional admin endpoints, Helm --set if deploying).
 ```
 
 ---
@@ -179,7 +200,7 @@ End with a short "smoke test" checklist for a human operator.
 Use this only if you prefer one paste instead of Prompts 0–6:
 
 ```text
-Implement a new domain for this repo following ADD_DOMAIN.md and the existing
+Implement a new domain for this repo following docs/ADD_DOMAIN.md and the existing
 aviation/shipping packages under domain/.
 
 Domain brief:
@@ -189,7 +210,8 @@ Domain brief:
 - entity mapping: <id / type / status / geometry / attributes>
 - enable locally via ENABLED_DOMAINS
 - include fixture + pytest
-- optional: graph bootstrap script, solver, Helm value notes
+- optional: domain/<DOMAIN_ID>/bootstrap_graph.py (+ scripts/seed_<DOMAIN_ID>.py),
+  solver, Helm --set / values notes (see _helpers.tpl defaults)
 
 Hard rules:
 - New code lives under domain/<DOMAIN_ID>/
@@ -198,7 +220,7 @@ Hard rules:
 - Domain fields go in CanonicalEntity.attributes only
 - Tests must be offline
 
-Use domain/shipping/adapters/shipping_demo.py and tests/test_ingestion.py
-as the primary implementation/test patterns. After changes, run the new tests
-and report the checklist from ADD_DOMAIN.md with done/skipped items.
+Use domain/shipping/adapters/shipping_demo.py, domain/shipping/bootstrap_graph.py,
+and tests/test_ingestion.py as the primary patterns. After changes, run the new
+tests and report the checklist from docs/ADD_DOMAIN.md with done/skipped items.
 ```

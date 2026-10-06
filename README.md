@@ -31,7 +31,7 @@ A **domain-agnostic** simulation and impact-reasoning platform built on:
 - [Running without hardware (CI / dev laptops)](#running-without-hardware-ci--dev-laptops)
 - [LLM backend configuration](#llm-backend-configuration)
 - [OpenShift Deployment](#openshift-deployment)
-- [Adding a domain](ADD_DOMAIN.md) · [Cursor prompts](docs/prompts/add-domain/README.md)
+- [Adding a domain](docs/ADD_DOMAIN.md) · [Cursor prompts](docs/ADD_DOMAIN_PROMPT.md)
 
 ---
 
@@ -112,8 +112,8 @@ optional geometry, timestamp, status, and a free-form attributes field). The
 shared runner in `lib/ingestion/` upserts into PostGIS only — ground truth,
 never the simulation overlay. Which domain packages load is controlled by
 `ENABLED_DOMAINS`; which adapter a CronJob runs is `--adapter` / Helm
-`adapterId`. Details: [ADD_DOMAIN.md](ADD_DOMAIN.md). Cursor paste-prompts:
-[docs/prompts/add-domain/README.md](docs/prompts/add-domain/README.md).
+`adapterId`. Details: [docs/ADD_DOMAIN.md](docs/ADD_DOMAIN.md). Cursor paste-prompts:
+[docs/ADD_DOMAIN_PROMPT.md](docs/ADD_DOMAIN_PROMPT.md).
 
 Each adapter runs two ways: as a scheduled OpenShift CronJob for steady polling, and as an on-demand callable that the reasoning agent can trigger mid-query when it needs current data.
 
@@ -221,8 +221,8 @@ swap points. The skeleton — OpenShift, vLLM (optional), Postgres, Neo4j, the
 ReAct pipeline, and the overlay mechanism — stays identical. Domain-specific
 code lives under top-level **`domain/<name>/`** packages (adapters, optional
 solvers). Which packages load is controlled by **`ENABLED_DOMAINS`**
-(see [ADD_DOMAIN.md](ADD_DOMAIN.md); Cursor:
-[docs/prompts/add-domain/README.md](docs/prompts/add-domain/README.md)).
+(see [docs/ADD_DOMAIN.md](docs/ADD_DOMAIN.md); Cursor:
+[docs/ADD_DOMAIN_PROMPT.md](docs/ADD_DOMAIN_PROMPT.md)).
 
 ![Fixed core vs. swap seams](docs/images/domain-seams.png)
 
@@ -269,7 +269,7 @@ uv run python scripts/seed_shipping.py   # ingest + graph + LA closure scenario
 5. **Live data and simulation knowledge stay separate.** The overlay must never mutate ground truth; this is what enables concurrent, reversible what-if scenarios.
 6. **The `tool_call_trace` is the reasoning audit trail.** Every `QueryResponse` includes the ordered list of tool calls the agent made — use this to debug or explain any answer.
 
-> In short: a fixed OpenShift-native skeleton handles platform, inference, storage, and agentic reasoning identically across domains, while domain packages under `domain/` — adapters, optional solvers, and related wiring — are all that change to retarget it from supply chains to manufacturing plants. See [ADD_DOMAIN.md](ADD_DOMAIN.md).
+> In short: a fixed OpenShift-native skeleton handles platform, inference, storage, and agentic reasoning identically across domains, while domain packages under `domain/` — adapters, optional solvers, and related wiring — are all that change to retarget it from supply chains to manufacturing plants. See [docs/ADD_DOMAIN.md](docs/ADD_DOMAIN.md).
 
 ---
 
