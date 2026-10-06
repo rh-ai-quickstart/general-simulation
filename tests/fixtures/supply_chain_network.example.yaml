@@ -1,5 +1,8 @@
 # Example overlay network manifest for general-simulation seed-network-overlay.
 # Merge onto base seed_demo.py data (same entity ids upsert; new ids add).
+# Cargo may be top-level (below) or nested under flights[] / vessels[] with
+# carrier_id inferred from the parent; commodity / unit_price_usd may be
+# omitted when sku_ref matches an inventory_skus id.
 
 version: "1"
 dataset_id: "supply-chain-overlay-example"

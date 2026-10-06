@@ -13,15 +13,17 @@ from lib.graph.nodes import EDGE_CARRIES, EDGE_DEPENDS_ON
 from lib.importers.models import ImportIssue
 
 _SUPPORTED_VERSIONS = frozenset({"1"})
+# Cargo is compiled in a second pass so nested flights/vessels cargo can
+# resolve commodity / unit_price_usd from inventory_skus via sku_ref.
 _ENTITY_SECTIONS = (
     "airports",
     "ports",
     "warehouses",
     "flights",
     "vessels",
-    "cargo",
     "inventory_skus",
 )
+_NESTED_CARGO_PARENT_SECTIONS = ("flights", "vessels")
 
 
 @dataclass
@@ -117,7 +119,24 @@ def compile_network_yaml(raw: dict[str, Any]) -> NetworkSeedBundle:
                 default_company_name=default_company_name,
             )
 
-    _apply_cargo_sku_links(raw.get("cargo") or [], sku_by_id, bundle)
+    cargo_rows = _normalize_cargo_rows(raw, bundle)
+    for index, row in enumerate(cargo_rows, start=1):
+        _fill_cargo_from_sku(row, sku_by_id, bundle, row_num=index)
+        entity_id = _require_str(row, "id", "cargo", index, bundle)
+        if not entity_id:
+            continue
+        if entity_id in entity_ids:
+            bundle.issues.append(
+                ImportIssue(
+                    level="error",
+                    message=f"Duplicate entity id {entity_id!r}",
+                    row=index,
+                )
+            )
+            continue
+        _compile_cargo(row, entity_id, now, bundle, entity_ids, dataset_id=bundle.dataset_id)
+
+    _apply_cargo_sku_links(cargo_rows, sku_by_id, bundle)
     _compile_dependencies(raw.get("dependencies") or [], bundle, entity_ids)
     _compile_scenarios(raw.get("scenarios") or [], bundle)
     validate_network_bundle(bundle)
@@ -262,10 +281,6 @@ def _compile_row(
         _compile_vessel(row, entity_id, now, bundle, entity_ids, carrier_ids, dataset_id)
         return
 
-    if section == "cargo":
-        _compile_cargo(row, entity_id, now, bundle, entity_ids, dataset_id)
-        return
-
     if section == "inventory_skus":
         _compile_sku(
             row,
@@ -277,6 +292,153 @@ def _compile_row(
             warehouse_ids,
             dataset_id,
         )
+
+
+def _normalize_cargo_rows(
+    raw: dict[str, Any],
+    bundle: NetworkSeedBundle,
+) -> list[dict[str, Any]]:
+    """Collect top-level and nested cargo rows with carrier_id resolved."""
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    def _append_cargo(
+        row: Any,
+        *,
+        source: str,
+        row_num: int,
+        default_carrier_id: str | None = None,
+    ) -> None:
+        if not isinstance(row, dict):
+            bundle.issues.append(
+                ImportIssue(
+                    level="error",
+                    message=f"{source}[{row_num}] must be an object",
+                    row=row_num,
+                )
+            )
+            return
+
+        cargo_row = dict(row)
+        nested_carrier = cargo_row.get("carrier_id")
+        if default_carrier_id is not None:
+            if nested_carrier not in (None, ""):
+                if str(nested_carrier).strip() != default_carrier_id:
+                    bundle.issues.append(
+                        ImportIssue(
+                            level="error",
+                            message=(
+                                f"{source}[{row_num}] carrier_id "
+                                f"{str(nested_carrier).strip()!r} does not match "
+                                f"parent id {default_carrier_id!r}"
+                            ),
+                            row=row_num,
+                        )
+                    )
+                    return
+            cargo_row["carrier_id"] = default_carrier_id
+
+        cargo_id = cargo_row.get("id")
+        if cargo_id not in (None, ""):
+            cargo_id_str = str(cargo_id).strip()
+            if cargo_id_str in seen_ids:
+                bundle.issues.append(
+                    ImportIssue(
+                        level="error",
+                        message=f"Duplicate cargo id {cargo_id_str!r}",
+                        row=row_num,
+                    )
+                )
+                return
+            seen_ids.add(cargo_id_str)
+
+        normalized.append(cargo_row)
+
+    top_level = raw.get("cargo") or []
+    if top_level and not isinstance(top_level, list):
+        bundle.issues.append(
+            ImportIssue(level="error", message="Section 'cargo' must be a list")
+        )
+    elif isinstance(top_level, list):
+        for index, row in enumerate(top_level, start=1):
+            _append_cargo(row, source="cargo", row_num=index)
+
+    for parent_section in _NESTED_CARGO_PARENT_SECTIONS:
+        parents = raw.get(parent_section) or []
+        if not isinstance(parents, list):
+            continue
+        for parent_index, parent in enumerate(parents, start=1):
+            if not isinstance(parent, dict):
+                continue
+            nested = parent.get("cargo")
+            if nested is None:
+                continue
+            if not isinstance(nested, list):
+                bundle.issues.append(
+                    ImportIssue(
+                        level="error",
+                        message=(
+                            f"{parent_section}[{parent_index}].cargo must be a list"
+                        ),
+                        row=parent_index,
+                    )
+                )
+                continue
+            parent_id = parent.get("id")
+            parent_id_str = (
+                str(parent_id).strip() if parent_id not in (None, "") else None
+            )
+            if not parent_id_str:
+                bundle.issues.append(
+                    ImportIssue(
+                        level="error",
+                        message=(
+                            f"{parent_section}[{parent_index}] missing id; "
+                            "cannot resolve nested cargo carrier_id"
+                        ),
+                        row=parent_index,
+                    )
+                )
+                continue
+            for cargo_index, cargo_row in enumerate(nested, start=1):
+                _append_cargo(
+                    cargo_row,
+                    source=f"{parent_section}[{parent_index}].cargo",
+                    row_num=cargo_index,
+                    default_carrier_id=parent_id_str,
+                )
+
+    return normalized
+
+
+def _fill_cargo_from_sku(
+    row: dict[str, Any],
+    sku_by_id: dict[str, dict[str, Any]],
+    bundle: NetworkSeedBundle,
+    *,
+    row_num: int,
+) -> None:
+    """Fill missing commodity / unit_price_usd from inventory_skus via sku_ref."""
+    sku_ref = row.get("sku_ref")
+    needs_commodity = row.get("commodity") in (None, "")
+    needs_price = row.get("unit_price_usd") in (None, "")
+    if not needs_commodity and not needs_price:
+        return
+
+    if sku_ref in (None, ""):
+        return
+
+    sku_ref_str = str(sku_ref).strip()
+    sku_row = sku_by_id.get(sku_ref_str)
+    if sku_row is None:
+        # _apply_cargo_sku_links reports unknown sku_ref; avoid duplicate noise here
+        # unless fields are still required after this pass.
+        return
+
+    if needs_commodity and sku_row.get("commodity") not in (None, ""):
+        row["commodity"] = sku_row["commodity"]
+    if needs_price and sku_row.get("unit_price_usd") not in (None, ""):
+        row["unit_price_usd"] = sku_row["unit_price_usd"]
 
 
 def _compile_facility(
