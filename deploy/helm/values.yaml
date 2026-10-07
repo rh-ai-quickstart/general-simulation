@@ -24,6 +24,9 @@ global:
 
 postgres:
   enabled: true
+  # Empty on OpenShift (restricted SCC assigns UID). Kind sets runAsUser/fsGroup.
+  podSecurityContext: {}
+  containerSecurityContext: {}
 
 # ai-architecture-charts pgvector subchart (separate Postgres STS). Disabled —
 # vector storage uses the general-sim Postgres image above (pgvector extension).
