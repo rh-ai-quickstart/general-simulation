@@ -19,8 +19,14 @@ spec:
     spec:
       # OpenShift restricted SCC: no fixed runAsUser/fsGroup — the platform assigns
       # a namespace UID and fsGroup; the postgres image supports arbitrary UID.
+      # Kind has no SCC: set postgres.podSecurityContext.runAsUser (999) in values-kind.yaml.
+      {{- if .Values.postgres.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.postgres.podSecurityContext | nindent 8 }}
+      {{- else }}
       securityContext:
         runAsNonRoot: true
+      {{- end }}
       containers:
         - name: postgres
           image: {{ include "postgres.containerImage" . }}
@@ -56,10 +62,15 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.postgres.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.postgres.containerSecurityContext | nindent 12 }}
+          {{- else }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          {{- end }}
           livenessProbe:
             exec:
               command:

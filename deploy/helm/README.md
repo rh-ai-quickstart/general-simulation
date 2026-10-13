@@ -76,6 +76,10 @@ API checks: `GET /health`, demo seed, `POST /query`.
 **RAM:** Neo4j’s chart requires at least 2Gi. Local Podman VMs should be ≥8Gi —
 run `make kind-preflight` first. GitHub `ubuntu-latest` is fine.
 
+**UIDs:** Kind has no OpenShift SCC, so `values-kind.yaml` pins Postgres to UID
+999 and Neo4j to UID 7474. Without that, pods stay in `CreateContainerConfigError`
+(`runAsNonRoot` with a root or non-numeric image USER).
+
 ```bash
 # One-shot local path (Podman + Kind)
 make local-kind-smoke-test
