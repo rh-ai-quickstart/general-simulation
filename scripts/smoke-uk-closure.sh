@@ -9,8 +9,10 @@
 # SEED_MODE:
 #   auto    — cluster when general-sim-api exists in NAMESPACE, else local (default)
 #   local   — uv run seed-demo from this repo (needs DB env / port-forwards)
-#   cluster — oc exec into general-sim-api; health/query hit localhost:8000 in-pod
+#   cluster — oc/kubectl exec into general-sim-api; health/query hit localhost:8000 in-pod
 #             (avoids OpenShift Route timeouts on long /query LLM calls)
+#
+# Cluster CLI: prefers `oc`, falls back to `kubectl` (Kind / plain Kubernetes).
 set -euo pipefail
 
 PY="${SMOKE_PYTHON:-/app/.venv/bin/python}"
@@ -21,10 +23,24 @@ QUERY_TIMEOUT="${QUERY_TIMEOUT:-600}"
 NAMESPACE="${NAMESPACE:-general-simulation}"
 API_BASE="${API_BASE:-}"
 
+_k8s() {
+  if command -v oc &>/dev/null; then
+    oc "$@"
+  elif command -v kubectl &>/dev/null; then
+    kubectl "$@"
+  else
+    echo "ERROR: neither 'oc' nor 'kubectl' found on PATH" >&2
+    return 127
+  fi
+}
+
 _cluster_resources_present() {
   local name="${1:-general-sim-api}"
-  oc get deployment "$name" -n "$NAMESPACE" &>/dev/null ||
-    oc get route "$name" -n "$NAMESPACE" &>/dev/null
+  if ! command -v oc &>/dev/null && ! command -v kubectl &>/dev/null; then
+    return 1
+  fi
+  _k8s get deployment "$name" -n "$NAMESPACE" &>/dev/null ||
+    { command -v oc &>/dev/null && oc get route "$name" -n "$NAMESPACE" &>/dev/null; }
 }
 
 _resolve_seed_mode() {
@@ -32,7 +48,7 @@ _resolve_seed_mode() {
     printf '%s' "$SEED_MODE"
     return
   fi
-  if ! command -v oc &>/dev/null; then
+  if ! command -v oc &>/dev/null && ! command -v kubectl &>/dev/null; then
     printf 'local'
     return
   fi
@@ -72,7 +88,7 @@ _cluster_http() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
-  oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
+  _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
     env METHOD="$method" PATH="$path" BODY="$body" TIMEOUT="$QUERY_TIMEOUT" \
     "$PY" -c '
 import json, os, sys
@@ -139,21 +155,21 @@ _fail_http() {
 _cluster_seed() {
   local pod seed_script repo_root
 
-  pod="$(oc get pod -n "$NAMESPACE" -l app.kubernetes.io/name=general-sim-api \
+  pod="$(_k8s get pod -n "$NAMESPACE" -l app.kubernetes.io/name=general-sim-api \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -z "$pod" ]]; then
     echo "ERROR: no general-sim-api pod in namespace ${NAMESPACE}" >&2
     exit 1
   fi
 
-  if oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
+  if _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
       test -x /app/.venv/bin/seed-demo 2>/dev/null; then
-    oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- seed-demo
+    _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- seed-demo
     return
   fi
-  if oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
+  if _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
       test -f /app/scripts/seed_demo.py 2>/dev/null; then
-    oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
+    _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
       "$PY" /app/scripts/seed_demo.py
     return
   fi
@@ -166,18 +182,18 @@ _cluster_seed() {
     exit 1
   fi
   echo "==> API image has no bundled seed script; copying from repo to pod /tmp/seed_demo.py"
-  oc cp "$seed_script" "${NAMESPACE}/${pod}:/tmp/seed_demo.py" -c "$CLUSTER_CONTAINER"
-  oc exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
+  _k8s cp "$seed_script" "${NAMESPACE}/${pod}:/tmp/seed_demo.py" -c "$CLUSTER_CONTAINER"
+  _k8s exec -n "$NAMESPACE" "$CLUSTER_DEPLOY" -c "$CLUSTER_CONTAINER" -- \
     "$PY" /tmp/seed_demo.py
 }
 
 echo "==> Seeding demo data (mode=${SEED_MODE})"
 case "$SEED_MODE" in
   local)
-    if command -v oc &>/dev/null; then
+    if command -v oc &>/dev/null || command -v kubectl &>/dev/null; then
       deploy_name="${CLUSTER_DEPLOY#deployment/}"
       if _cluster_resources_present "$deploy_name"; then
-        echo "ERROR: OpenShift resources exist in namespace '${NAMESPACE}' but seed mode is 'local'." >&2
+        echo "ERROR: cluster resources exist in namespace '${NAMESPACE}' but seed mode is 'local'." >&2
         echo "Run: SEED_MODE=cluster make smoke-test" >&2
         exit 1
       fi
