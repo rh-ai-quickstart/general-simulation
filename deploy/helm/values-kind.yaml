@@ -36,6 +36,19 @@ postgres:
   enabled: true
   postgres:
     password: kind-demo-password
+  # Kind has no OpenShift SCC to assign a UID. The image USER is empty (root),
+  # so runAsNonRoot alone fails with CreateContainerConfigError — pin UID 999.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 999
+    capabilities:
+      drop: ["ALL"]
 
 pgvector:
   enabled: false
@@ -47,6 +60,21 @@ neo4j:
   # SCC off skips ServiceAccount/neo4j-sa; clear the chart default SA.
   podSpec:
     serviceAccountName: default
+  # Image USER is the string "neo4j"; Kind cannot verify non-root without a
+  # numeric runAsUser (UID 7474 matches the image passwd entry).
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 7474
+    runAsGroup: 7474
+    fsGroup: 7474
+    fsGroupChangePolicy: OnRootMismatch
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 7474
+    runAsGroup: 7474
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
   neo4j:
     resources:
       # Official neo4j chart fails helm template below 2Gi — this is the floor.
