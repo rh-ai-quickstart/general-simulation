@@ -1,0 +1,31 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
+flowchart LR
+  subgraph GT["GROUND TRUTH — read-only at query time"]
+    direction TB
+    NJG["Neo4j Entity graph<br/>A → B ← C · B → D<br/>FEEDS / DEPENDS_ON / CARRIES"]
+    PGS["PostGIS live snapshot<br/>positions · states · geometry"]
+    NJG --- PGS
+  end
+
+  REF[["references — never edits"]]
+
+  subgraph OV["OVERLAY — injected, removable in one op"]
+    direction TB
+    EV["SimulationEvent<br/>scenario_id = S1"]
+    AB["AFFECTED_BY → Entity B, D<br/>Neo4j overlay edges"]
+    VEC["Event narrative in pgvector<br/>tagged scenario_id = S1"]
+    NOTE["Multiple scenarios coexist<br/>S1, S2, S3… independent what-ifs"]
+    EV --> AB
+    EV --> VEC
+    EV --- NOTE
+  end
+
+  GT --> REF --> OV
+
+  classDef truth fill:#e8f0fe,stroke:#1a73e8,color:#174ea6
+  classDef overlay fill:#fce8e6,stroke:#c5221f,color:#a50e0e
+  classDef link fill:#fff,stroke:#c5221f,color:#c5221f
+
+  class NJG,PGS truth
+  class EV,AB,VEC,NOTE overlay
+  class REF link

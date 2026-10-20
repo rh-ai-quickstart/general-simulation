@@ -49,11 +49,11 @@ The whole platform is built to run on **OpenShift**, which is a hard constraint 
 
 ## System at a glance
 
-The platform is a small number of cooperating layers running inside one OpenShift cluster. The diagram below shows how they stack: an API and an orchestrator at the top, the three reasoning stages beneath, the LLM client as the inference/vector backend, and separate Neo4j and Postgres instances for graph and geo/vector state. Two things are worth noticing immediately — the reasoning stages are colour-coded by whether they use the LLM, and both the graph (Neo4j) and geo (PostGIS) paths bypass the LLM client to be queried directly.
+The platform is a small number of cooperating layers running inside one OpenShift cluster. The diagram below shows how they stack: FastAPI at the top, an in-process ReAct agent loop that chooses tools, the LLM client as the inference/embedding path, and separate Neo4j and Postgres instances for graph and geo/vector state. Two things are worth noticing immediately — tools are colour-coded by whether they need the LLM, and both the graph (Neo4j) and geo (PostGIS) paths bypass Llama Stack to be queried directly. Vector search hits pgvector via the LLM client (asyncpg), not a Llama Stack vector provider.
 
 ![Layered system overview](docs/images/architecture-overview.png)
 
-*Figure 1 — Layered system overview. Everything runs inside OpenShift. The LLM client fronts inference and vector/RAG; graph (Neo4j) and live/geo (PostGIS) are queried directly.*
+*Figure 1 — Layered system overview. Everything runs inside OpenShift. ReAct tools drive Neo4j / PostGIS / pgvector; Llama Stack is the inference gateway (optional in-cluster vLLM behind it).*
 
 The remaining sections walk through each component: what it is, why it is there, and how it relates to its neighbours.
 
@@ -175,7 +175,7 @@ A `POST /query` request kicks off the ReAct agent loop. The diagram below captur
 
 ![The query lifecycle](docs/images/query-flow.png)
 
-*Figure 2 — The ReAct query lifecycle. The LLM decides which tools to call; every tool invocation and its result appear in the `tool_call_trace` field of the response.*
+*Figure 2 — The ReAct query lifecycle. After a spatial AFFECTED_BY refresh, the LLM decides which tools to call; every invocation appears in `tool_call_trace`.*
 
 **Typical agent sequence for an impact question:**
 
@@ -208,7 +208,7 @@ This is what makes multiple concurrent what-if scenarios trivial — each is an 
 
 ![The overlay mechanism](docs/images/simulation-overlay.png)
 
-*Figure 3 — The overlay mechanism. Ground truth (left) is read-only at query time. The event and its affected-entity references (right) are injected and removable, leaving the base graph intact.*
+*Figure 3 — The overlay mechanism. Ground truth (Neo4j entity graph + PostGIS live snapshot) is read-only at query time. The SimulationEvent, AFFECTED_BY edges, and pgvector narrative (right) are injected and removable.*
 
 > **What kind of simulation this is (and isn’t):** This is a **dependency-and-impact reasoning** engine: it propagates effects through a known graph and applies solver logic on top. It is **not** a tick-by-tick discrete-event physics simulation (e.g. AnyLogic). That is an intentional trade: you gain explainability, speed, and concurrent what-if scenarios; you give up stochastic second-by-second temporal dynamics. Because the Stage 2 solver is pluggable, a full discrete-event engine can be dropped into that slot later without changing anything else.
 
@@ -226,7 +226,7 @@ solvers). Which packages load is controlled by **`ENABLED_DOMAINS`**
 
 ![Fixed core vs. swap seams](docs/images/domain-seams.png)
 
-*Figure 4 — The fixed core (left) versus the per-domain swap seams (right). Domain adaptation touches only the right-hand column.*
+*Figure 4 — The fixed core (left) versus per-domain swap seams under `domain/` (right), selected by `ENABLED_DOMAINS`. Domain adaptation touches only the right-hand column.*
 
 The reason this works is that impact propagation is graph traversal in every domain. A port closure cascading through dependent routes and a stopped machine cascading through dependent cells are the **same** Cypher traversal over a **different** schema. The table below makes the mapping concrete.
 

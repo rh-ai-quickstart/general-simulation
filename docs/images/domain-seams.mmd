@@ -1,0 +1,35 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
+flowchart LR
+  subgraph CORE["FIXED CORE — identical across domains"]
+    direction TB
+    C1["OpenShift + Helm umbrella"]
+    C2["Llama Stack inference gateway"]
+    C3["LLM client · OpenAI-compatible"]
+    C4["Neo4j graph + overlays"]
+    C5["Postgres: pgvector + PostGIS"]
+    C6["ReAct agent pipeline + tools"]
+    C7["Simulation overlay mechanism"]
+    C8["Canonical entity schema"]
+    C1 --- C2 --- C3 --- C4 --- C5 --- C6 --- C7 --- C8
+  end
+
+  PLUG["plug into<br/>ENABLED_DOMAINS"]
+
+  subgraph SEAMS["SWAP SEAMS — per domain package under domain/"]
+    direction TB
+    S1["1. Ingestion adapters<br/>aviation: OpenSky · shipping: fixture/API<br/>mfg: OPC-UA / MQTT / SCADA"]
+    S2["2. Graph schema / seed wiring<br/>Port·Route·Region vs ISA-95 plant"]
+    S3["3. Solver optional Stage 2<br/>pathfinding vs rescheduling<br/>default: StubSolver"]
+    S4["4. Domain RAG context<br/>logistics precedent vs SOPs / playbooks"]
+    S1 --- S2 --- S3 --- S4
+  end
+
+  CORE --> PLUG --> SEAMS
+
+  classDef core fill:#e8f0fe,stroke:#1a73e8,color:#174ea6
+  classDef seam fill:#fef7e0,stroke:#e37400,color:#b06000
+  classDef link fill:#fff,stroke:#5f6368,color:#5f6368
+
+  class C1,C2,C3,C4,C5,C6,C7,C8 core
+  class S1,S2,S3,S4 seam
+  class PLUG link
