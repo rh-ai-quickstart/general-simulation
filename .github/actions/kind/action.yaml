@@ -1,0 +1,159 @@
+name: Kind cluster and Helm deploy
+description: Create a Kind cluster with a local registry and install the general-simulation Helm chart
+
+inputs:
+  namespace:
+    description: Kubernetes namespace for the release
+    required: false
+    default: general-simulation
+  helm_release:
+    description: Helm release name
+    required: false
+    default: general-simulation
+  registry:
+    description: Local registry host:port (Kind registry mirror)
+    required: false
+    default: localhost:5001
+  helm_extra_args:
+    description: Extra arguments passed to helm upgrade --install
+    required: false
+    default: ""
+  skip_image_build:
+    description: Skip building and pushing app images (use tags already in the local registry)
+    required: false
+    default: "false"
+  wait_for_rollout:
+    description: Wait for general-sim-api Deployment to become Available
+    required: false
+    default: "true"
+  run_builtin_smoke:
+    description: Run minimal /health check in this action (disable if the workflow runs kind-verify-deployment.sh)
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Go (Kind CLI)
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.22.x"
+
+    - name: Install Kind
+      shell: bash
+      run: |
+        go install sigs.k8s.io/kind@v0.30.0
+        echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
+
+    - name: Install Podman
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y podman
+        podman version
+        podman info
+
+    - name: Create Kind cluster with local registry
+      shell: bash
+      env:
+        USE_PODMAN: "1"
+      run: bash ./scripts/ci/kind-with-registry.sh
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: v3.19.4
+
+    - name: Helm dependencies
+      shell: bash
+      run: make helm-deps
+
+    - name: Build app images
+      if: inputs.skip_image_build != 'true'
+      shell: bash
+      run: make kind-build-images REGISTRY=${{ inputs.registry }}
+
+    - name: Push app images to local registry
+      if: inputs.skip_image_build != 'true'
+      shell: bash
+      run: make kind-push-images REGISTRY=${{ inputs.registry }} PUSH_EXTRA_ARGS=--tls-verify=false
+
+    - name: Create namespace
+      shell: bash
+      run: make k8s-namespace NAMESPACE=${{ inputs.namespace }}
+
+    - name: Helm install (Kind values)
+      id: helm_install
+      shell: bash
+      run: |
+        set -euo pipefail
+        make helm-install-kind \
+          NAMESPACE=${{ inputs.namespace }} \
+          HELM_RELEASE_NAME=${{ inputs.helm_release }} \
+          REGISTRY=${{ inputs.registry }} \
+          HELM_EXTRA_ARGS="${{ inputs.helm_extra_args }}"
+
+    - name: Dump cluster state on Helm install failure
+      if: failure() && steps.helm_install.outcome == 'failure'
+      shell: bash
+      run: |
+        set +e
+        NS="${{ inputs.namespace }}"
+        REL="${{ inputs.helm_release }}"
+        echo "=== kubectl get deploy,sts,svc,pvc,job,sa,pods -n ${NS} ==="
+        kubectl get deploy,sts,svc,pvc,job,sa,pods -n "${NS}" -o wide
+        echo "=== kubectl get events -n ${NS} (last 50) ==="
+        kubectl get events -n "${NS}" --sort-by=.lastTimestamp | tail -50
+        echo "=== StorageClasses ==="
+        kubectl get storageclass
+        echo "=== helm status ==="
+        helm status "${REL}" -n "${NS}" || true
+        dump_pod() {
+          local pod="$1"
+          echo "=== describe ${pod} ==="
+          kubectl describe -n "${NS}" "${pod}" | tail -50
+          kubectl logs -n "${NS}" "${pod}" --all-containers --tail=80 2>/dev/null || true
+        }
+        for dep in general-sim-api neo4j postgres bootstrap; do
+          echo "=== candidates matching *${dep}* ==="
+          kubectl get pods -n "${NS}" -o name 2>/dev/null | grep -i "${dep}" | while read -r pod; do
+            dump_pod "${pod}"
+          done
+        done
+        if kubectl get pod -n "${NS}" "${REL}-0" >/dev/null 2>&1; then
+          dump_pod "pod/${REL}-0"
+        fi
+        kubectl get jobs -n "${NS}" -o name 2>/dev/null | while read -r job; do
+          echo "=== job describe ${job} ==="
+          kubectl describe -n "${NS}" "${job}" | tail -40
+          kubectl logs -n "${NS}" "job/$(basename "${job}")" --all-containers --tail=80 2>/dev/null || true
+        done
+
+    - name: Wait for API deployment
+      if: inputs.wait_for_rollout == 'true'
+      shell: bash
+      run: |
+        kubectl wait --namespace "${{ inputs.namespace }}" \
+          --for=condition=available \
+          deployment/general-sim-api \
+          --timeout=300s
+
+    - name: Smoke test API /health
+      if: inputs.wait_for_rollout == 'true' && inputs.run_builtin_smoke == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        kubectl port-forward -n "${{ inputs.namespace }}" \
+          svc/general-sim-api 18000:8000 >/tmp/pf.log 2>&1 &
+        PF_PID=$!
+        trap 'kill "${PF_PID}" 2>/dev/null || true' EXIT
+        for _ in $(seq 1 45); do
+          if curl -sf http://127.0.0.1:18000/health | grep -q '"status"'; then
+            echo "API /health OK"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "API /health did not become ready"
+        cat /tmp/pf.log || true
+        exit 1

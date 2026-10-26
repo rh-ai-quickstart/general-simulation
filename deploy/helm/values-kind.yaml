@@ -1,0 +1,130 @@
+# Kind / plain Kubernetes CI overrides (use with: make helm-install-kind)
+#
+# Availability contract for helm --wait (must become Ready/Complete):
+#   postgres, neo4j (Service name neo4j), general-sim-api, then
+#   general-sim-bootstrap post-install hook.
+#
+# Kept off so they cannot block --wait or pull heavy images:
+#   llama-stack, llm-service, OpenSky ingestion CronJob.
+# OpenShift Routes disabled (no router on Kind).
+#
+# Demo passwords so Postgres/Neo4j secret templates render without
+# values-secrets.yaml. Local Podman + Kind needs an 8Gi Podman VM
+# (Neo4j chart minimum is 2Gi). Run `make kind-preflight` before local smoke.
+
+openshift:
+  neo4j:
+    scc:
+      enabled: false
+
+global:
+  registry: localhost:5001
+  imageTag: latest
+  postgres:
+    password: kind-demo-password
+  neo4j:
+    password: kind-demo-password
+  models:
+    openai:
+      enabled: false
+    deepseek-r1-distill-qwen-1-5b:
+      enabled: false
+    external-model:
+      enabled: false
+
+postgres:
+  enabled: true
+  postgres:
+    password: kind-demo-password
+  # Kind has no OpenShift SCC to assign a UID. The image USER is empty (root),
+  # so runAsNonRoot alone fails with CreateContainerConfigError — pin UID 999.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 999
+    capabilities:
+      drop: ["ALL"]
+
+pgvector:
+  enabled: false
+
+neo4j:
+  enabled: true
+  fullnameOverride: neo4j
+  disableLookups: true
+  # SCC off skips ServiceAccount/neo4j-sa; clear the chart default SA.
+  podSpec:
+    serviceAccountName: default
+  # Image USER is the string "neo4j"; Kind cannot verify non-root without a
+  # numeric runAsUser (UID 7474 matches the image passwd entry).
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 7474
+    runAsGroup: 7474
+    fsGroup: 7474
+    fsGroupChangePolicy: OnRootMismatch
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 7474
+    runAsGroup: 7474
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  neo4j:
+    resources:
+      # Official neo4j chart fails helm template below 2Gi — this is the floor.
+      cpu: "500m"
+      memory: 2Gi
+  volumes:
+    data:
+      mode: dynamic
+      dynamic:
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 2Gi
+        # Kind local-path provisioner (default StorageClass name).
+        storageClassName: standard
+
+llama-stack:
+  enabled: false
+
+llm-service:
+  enabled: false
+
+api:
+  enabled: true
+  route:
+    enabled: false
+  llm:
+    backend: fake
+    # Not used by FakeLLMClient; keeps Secret non-empty for Kind.
+    apiKey: kind-unused
+    baseUrl: http://127.0.0.1:9/v1
+  postgres:
+    password: kind-demo-password
+  neo4j:
+    password: kind-demo-password
+  # Fake backend ignores the model id; keep a stable placeholder.
+  models:
+    generation: fake/canned
+    embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5
+
+bootstrap:
+  enabled: true
+  postgres:
+    password: kind-demo-password
+  neo4j:
+    password: kind-demo-password
+
+ingestion:
+  enabled: false
+  postgres:
+    password: kind-demo-password
+  neo4j:
+    password: kind-demo-password
