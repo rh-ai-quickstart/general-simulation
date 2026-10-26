@@ -8,6 +8,7 @@ external subchart dependencies.
 | File | Purpose |
 |------|---------|
 | [`values.yaml`](values.yaml) | **Default config** — component toggles, models, images |
+| [`values-kind.yaml`](values-kind.yaml) | Kind / plain Kubernetes CI overrides (no Routes, fake LLM, demo secrets) |
 | [`values-secrets.yaml.example`](values-secrets.yaml.example) | Template for passwords/tokens (copy to `values-secrets.yaml`) |
 
 ## Template layout
@@ -65,3 +66,35 @@ enable the CronJob. Domain keys (`api.enabledDomains`, `ingestion.adapterId`, et
 default via `templates/_helpers.tpl`.
 
 **Values flow:** see [`VALUES_MAPPING.md`](../../docs/VALUES_MAPPING.md).
+
+## Kind / local Kubernetes smoke
+
+CI and local verification use Kind with a local registry (`localhost:5001`),
+`values-kind.yaml` (Routes off, Llama Stack off, `api.llm.backend: fake`), then
+API checks: `GET /health`, demo seed, `POST /query`.
+
+**RAM:** Neo4j’s chart requires at least 2Gi. Local Podman VMs should be ≥8Gi —
+run `make kind-preflight` first. GitHub `ubuntu-latest` is fine.
+
+**UIDs:** Kind has no OpenShift SCC, so `values-kind.yaml` pins Postgres to UID
+999 and Neo4j to UID 7474. Without that, pods stay in `CreateContainerConfigError`
+(`runAsNonRoot` with a root or non-numeric image USER).
+
+```bash
+# One-shot local path (Podman + Kind)
+make local-kind-smoke-test
+
+# Or step by step:
+bash scripts/ci/kind-with-registry.sh
+make kind-build-images REGISTRY=localhost:5001
+make kind-push-images REGISTRY=localhost:5001 PUSH_EXTRA_ARGS=--tls-verify=false
+make helm-install-kind REGISTRY=localhost:5001
+make kind-verify
+
+# Reuse an existing cluster / images:
+make local-kind-smoke-test LOCAL_KIND_SMOKE_ARGS='--skip-build'
+make local-kind-smoke-test LOCAL_KIND_SMOKE_ARGS='--recreate --cleanup'
+```
+
+GitHub Actions: [`.github/workflows/kind-helm-smoke.yml`](../../.github/workflows/kind-helm-smoke.yml)
+uses [`.github/actions/kind`](../../.github/actions/kind/action.yaml).

@@ -1,0 +1,54 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Helvetica, Arial, sans-serif", "fontSize": "14px", "primaryColor": "#e8f0fe", "primaryBorderColor": "#1a73e8", "primaryTextColor": "#202124", "lineColor": "#5f6368", "secondaryColor": "#e6f4ea", "tertiaryColor": "#fce8e6"}}}%%
+flowchart TB
+  subgraph OCP["OpenShift cluster — hard platform constraint"]
+    direction TB
+
+    API["FastAPI — POST /query · /admin/*"]
+    REACT["ReAct agent loop — lib/reasoning/pipeline.py<br/>LLM chooses tools · max 6 rounds · tool_call_trace"]
+
+    API --> REACT
+
+    subgraph TOOLS["Agent tools — called in any order"]
+      direction LR
+      T1["get_affected_subgraph<br/><b>NO LLM</b> · Neo4j Cypher"]
+      T2["solve_impact<br/><b>NO LLM</b> · PostGIS + Solver"]
+      T3["search_scenario_context<br/><b>via LLM client</b> · pgvector"]
+      T4["run_ingestion_pull<br/>on-demand adapter"]
+    end
+
+    REACT --> TOOLS
+
+    LLM["LLM client — OpenAI-compatible<br/>inference + embed · pgvector via asyncpg"]
+    LS["Llama Stack — inference gateway<br/>maas · openai · local vLLM"]
+    VLLM["vLLM optional — llm-service<br/>OpenShift AI / KServe"]
+
+    T3 --> LLM
+    REACT --> LLM
+    LLM --> LS
+    LS -.-> VLLM
+
+    subgraph DIRECT["Queried directly — not via Llama Stack"]
+      direction LR
+      NJ["Neo4j — dependency graph<br/>+ SimulationEvent overlays"]
+      PG["PostgreSQL StatefulSet<br/>pgvector + PostGIS<br/>no AGE"]
+    end
+
+    T1 --> NJ
+    T2 --> PG
+    LLM --> PG
+    T4 --> PG
+  end
+
+  classDef entry fill:#1a73e8,stroke:#174ea6,color:#fff
+  classDef agent fill:#9334e6,stroke:#681da8,color:#fff
+  classDef nollm fill:#e6f4ea,stroke:#137333,color:#137333
+  classDef llm fill:#f3e8fd,stroke:#9334e6,color:#5b2d8e
+  classDef infra fill:#fff3e0,stroke:#e37400,color:#b06000
+  classDef store fill:#e8f0fe,stroke:#1a73e8,color:#174ea6
+
+  class API entry
+  class REACT agent
+  class T1,T2 nollm
+  class T3,T4,LLM llm
+  class LS,VLLM infra
+  class NJ,PG store

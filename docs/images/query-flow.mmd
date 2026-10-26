@@ -1,0 +1,40 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Helvetica, Arial, sans-serif", "fontSize": "14px"}}}%%
+flowchart TB
+  START["POST /query<br/>{ question, scenario_id }"]
+  PRE["Pre-step: refresh AFFECTED_BY<br/>from PostGIS bbox → Neo4j"]
+  LOOP["ReAct loop — LLM orchestrates<br/>up to 6 rounds · tool_choice required then auto"]
+
+  START --> PRE --> LOOP
+
+  LOOP --> T1
+  LOOP --> T2
+  LOOP --> T3
+  LOOP --> T4
+
+  T1["① get_affected_subgraph<br/>Neo4j: AFFECTED_BY seeds + DEPENDS_ON / FEEDS / CARRIES expand"]
+  T2["② solve_impact<br/>PostGIS live state + StubSolver / domain solver"]
+  T3["③ search_scenario_context<br/>pgvector narrative chunks via LLM client"]
+  T4["④ run_ingestion_pull optional<br/>refresh live entities from adapter"]
+
+  T1 --> ANS
+  T2 --> ANS
+  T3 --> ANS
+  T4 --> ANS
+
+  ANS["LLM final answer grounded in tool outputs"]
+  OUT["QueryResponse<br/>answer · affected_entities · solver · tool_call_trace"]
+
+  ANS --> OUT
+
+  classDef entry fill:#1a73e8,stroke:#174ea6,color:#fff
+  classDef pre fill:#e8f0fe,stroke:#1a73e8,color:#174ea6
+  classDef agent fill:#9334e6,stroke:#681da8,color:#fff
+  classDef tool fill:#e6f4ea,stroke:#137333,color:#137333
+  classDef opt fill:#fef7e0,stroke:#f9ab00,color:#7a5c00
+  classDef out fill:#1a73e8,stroke:#174ea6,color:#fff
+
+  class START,OUT entry
+  class PRE pre
+  class LOOP,ANS agent
+  class T1,T2,T3 tool
+  class T4 opt

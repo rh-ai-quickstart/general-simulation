@@ -37,11 +37,24 @@ IMG_NEO4J    := $(REGISTRY)/$(NEO4J_IMAGE_NAME):$(TAG)
 
 # ── Helm chart paths ──────────────────────────────────────────────────────────
 CHART_UMBRELLA       := deploy/helm
+CHART_VALUES         := deploy/helm/values.yaml
+CHART_VALUES_KIND    := deploy/helm/values-kind.yaml
 CHART_VALUES_SECRETS := deploy/helm/values-secrets.yaml
 
 # Common flags passed to every helm command
 HELM_RELEASE_NAME ?= general-simulation
 HELM_COMMON := --namespace $(NAMESPACE)
+HELM_EXTRA_ARGS ?=
+KIND_DEPLOY_TIMEOUT ?= 15m
+# Optional on push, e.g. PUSH_EXTRA_ARGS=--tls-verify=false for Kind (localhost:5001)
+PUSH_EXTRA_ARGS ?=
+LOCAL_KIND_SMOKE_ARGS ?=
+
+# Kind: pin images to the local registry via global.registry / neo4j.customImage.
+HELM_KIND_IMAGE_SETS = \
+	--set global.registry=$(REGISTRY) \
+	--set global.imageTag=$(TAG) \
+	--set neo4j.image.customImage=$(IMG_NEO4J)
 
 # Neo4j subchart reads image.customImage directly (not global.registry helpers).
 _helm_neo4j_image_set := --set neo4j.image.customImage=$(IMG_NEO4J)
@@ -75,10 +88,13 @@ LOCAL_COMPOSE := deploy/local/composefile.yml
         build build-postgres build-neo4j build-app \
         deploy deploy-umbrella neo4j-connect \
         package-chart \
-        undeploy status lint-charts test-unit smoke-test \
+        undeploy status lint-charts helm-deps test-unit smoke-test \
         local-up local-down local-bootstrap \
+        kind-build-images kind-push-images k8s-namespace \
+        helm-install-kind kind-undeploy \
+        kind-preflight kind-verify local-kind-smoke-test \
         _guard-values-secrets \
-        _guard-oc _guard-helm _guard-podman _guard-namespace \
+        _guard-oc _guard-helm _guard-podman _guard-namespace _guard-kubectl \
         _remove-orphan-neo4j-resources _remove-openshift-routes
 
 # ── Default target ────────────────────────────────────────────────────────────
@@ -95,11 +111,21 @@ help:
 	@printf "  %-40s %s\n" "undeploy" "Uninstall Helm releases"
 	@printf "  %-40s %s\n" "status" "helm list + oc get pods"
 	@printf "  %-40s %s\n" "lint-charts" "helm lint"
+	@printf "  %-40s %s\n" "helm-deps" "Update Helm chart dependencies"
 	@printf "  %-40s %s\n" "test-unit" "Run unit tests (uv run pytest)"
 	@printf "  %-40s %s\n" "smoke-test" "Seed UK demo + POST /query (auto cluster when deployed)"
 	@printf "  %-40s %s\n" "local-up" "Start local Postgres + Neo4j (compose --wait)"
 	@printf "  %-40s %s\n" "local-down" "Stop local Postgres + Neo4j"
 	@printf "  %-40s %s\n" "local-bootstrap" "local-up + schema bootstrap (Postgres + Neo4j)"
+	@printf "\nKind / local Kubernetes:\n"
+	@printf "  %-40s %s\n" "kind-preflight" "Check Podman VM / Kind node RAM before local smoke"
+	@printf "  %-40s %s\n" "kind-build-images" "Build images for REGISTRY (default quay; use localhost:5001)"
+	@printf "  %-40s %s\n" "kind-push-images" "Push kind-build-images to REGISTRY"
+	@printf "  %-40s %s\n" "k8s-namespace" "Create kubectl namespace (NAMESPACE)"
+	@printf "  %-40s %s\n" "helm-install-kind" "Install on Kind (values-kind.yaml + local REGISTRY)"
+	@printf "  %-40s %s\n" "kind-verify" "Post-deploy checks (port-forward + /health + seed + /query)"
+	@printf "  %-40s %s\n" "local-kind-smoke-test" "Full local Kind smoke (cluster + images + install + verify)"
+	@printf "  %-40s %s\n" "kind-undeploy" "helm uninstall Kind release (kubectl; no oc)"
 	@printf "\nVariables:\n"
 	@printf "  %-18s %s\n" "REGISTRY"         "$(REGISTRY)"
 	@printf "  %-18s %s\n" "APP_IMAGE_NAME"   "$(APP_IMAGE_NAME)"
@@ -139,6 +165,10 @@ _guard-helm:
 _guard-podman:
 	@command -v podman >/dev/null 2>&1 || \
 	  { echo "ERROR: 'podman' not found. Install Podman or substitute 'docker' by setting PODMAN=docker."; exit 1; }
+
+_guard-kubectl:
+	@command -v kubectl >/dev/null 2>&1 || \
+	  { echo "ERROR: 'kubectl' not found. Install kubectl for Kind targets."; exit 1; }
 
 # ── Container image builds ────────────────────────────────────────────────────
 build: _guard-podman build-postgres build-neo4j build-app
@@ -308,12 +338,15 @@ status: _guard-helm _guard-oc
 	@echo "==> Pod status:"
 	@oc get pods -n $(NAMESPACE)
 
-lint-charts: _guard-helm
+helm-deps: _guard-helm
+	@echo "==> Updating umbrella chart dependencies..."
 	helm repo add neo4j https://helm.neo4j.com/neo4j 2>/dev/null || true
 	helm repo update neo4j
 	helm repo add ai-architecture-charts $(LLM_SERVICE_CHART_REPO) 2>/dev/null || true
 	helm repo update ai-architecture-charts
 	helm dependency update $(CHART_UMBRELLA)
+
+lint-charts: helm-deps
 	helm lint $(CHART_UMBRELLA)
 	@echo "==> Chart passed lint."
 
@@ -332,3 +365,65 @@ local-bootstrap: local-up
 smoke-test:
 	@chmod +x scripts/smoke-uk-closure.sh
 	./scripts/smoke-uk-closure.sh
+
+# ── Kind / plain Kubernetes ───────────────────────────────────────────────────
+
+kind-build-images: _guard-podman
+	@echo "==> Building Neo4j image: $(IMG_NEO4J)"
+	podman build \
+	  --platform=linux/amd64 \
+	  -f deploy/container_files/neo4j/Containerfile \
+	  -t $(IMG_NEO4J) \
+	  deploy/container_files/neo4j
+	@echo "==> Building Postgres image: $(IMG_POSTGRES)"
+	podman build \
+	  --platform=linux/amd64 \
+	  -f deploy/container_files/postgres/Containerfile \
+	  -t $(IMG_POSTGRES) \
+	  deploy/container_files/postgres
+	@echo "==> Building FastAPI app image: $(IMG_APP)"
+	podman build \
+	  --platform=linux/amd64 \
+	  -f deploy/container_files/api/Containerfile \
+	  -t $(IMG_APP) \
+	  .
+
+kind-push-images: _guard-podman
+	@echo "==> Pushing images to $(REGISTRY) ($(PUSH_EXTRA_ARGS))"
+	podman push $(PUSH_EXTRA_ARGS) $(IMG_NEO4J)
+	podman push $(PUSH_EXTRA_ARGS) $(IMG_POSTGRES)
+	podman push $(PUSH_EXTRA_ARGS) $(IMG_APP)
+
+k8s-namespace: _guard-kubectl
+	@echo "==> Ensuring namespace $(NAMESPACE)"
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl config set-context --current --namespace=$(NAMESPACE) >/dev/null 2>&1 || true
+
+helm-install-kind: helm-deps k8s-namespace
+	@echo "==> Installing $(HELM_RELEASE_NAME) on Kind/Kubernetes (namespace: $(NAMESPACE), registry: $(REGISTRY))"
+	helm upgrade --install $(HELM_RELEASE_NAME) $(CHART_UMBRELLA) \
+	  --namespace $(NAMESPACE) \
+	  -f $(CHART_VALUES) \
+	  -f $(CHART_VALUES_KIND) \
+	  $(HELM_KIND_IMAGE_SETS) \
+	  $(HELM_EXTRA_ARGS) \
+	  --wait \
+	  --timeout $(KIND_DEPLOY_TIMEOUT)
+
+kind-undeploy: _guard-helm _guard-kubectl
+	@echo "==> Removing Helm release $(HELM_RELEASE_NAME) from namespace $(NAMESPACE)..."
+	helm uninstall $(HELM_RELEASE_NAME) --namespace $(NAMESPACE) 2>/dev/null || true
+
+kind-preflight:
+	@chmod +x scripts/ci/kind-preflight.sh
+	@bash ./scripts/ci/kind-preflight.sh
+
+kind-verify:
+	@chmod +x scripts/ci/kind-verify-deployment.sh
+	@NAMESPACE=$(NAMESPACE) HELM_RELEASE=$(HELM_RELEASE_NAME) \
+	  bash ./scripts/ci/kind-verify-deployment.sh
+
+local-kind-smoke-test:
+	@chmod +x scripts/local-kind-smoke-test.sh scripts/ci/kind-with-registry.sh \
+	  scripts/ci/kind-preflight.sh scripts/ci/kind-verify-deployment.sh
+	@bash ./scripts/local-kind-smoke-test.sh $(LOCAL_KIND_SMOKE_ARGS)
