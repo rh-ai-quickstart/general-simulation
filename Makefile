@@ -14,14 +14,19 @@
 # Enable LLM providers via global.models.<key>.enabled in deploy/helm/values.yaml.
 # Set llm-service.enabled: true for in-cluster vLLM (requires hf_token in secrets).
 #
-# Image registry/tag: edit deploy/helm/values.yaml (global.registry, global.imageTag, …)
-# or override on the command line (REGISTRY=/TAG=/APP_IMAGE_NAME= → helm --set).
+# Image registry/tag: defaults pin to this repo's short git commit. Override with
+# REGISTRY= / TAG= / APP_IMAGE_NAME= (build, push, and helm --set stay in sync).
 # =============================================================================
 
 # ── Configurable variables ────────────────────────────────────────────────────
 REGISTRY            ?= quay.io/rh-ai-quickstart
 NAMESPACE           ?= general-simulation
-TAG                 ?= latest
+# Default tag is the short commit SHA so published images match a repo revision.
+# Override when needed, e.g. TAG=latest or TAG=dev. No silent latest fallback.
+TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+ifeq ($(strip $(TAG)),)
+$(error TAG could not be resolved from git; set TAG=<tag> explicitly (e.g. TAG=latest))
+endif
 APP_IMAGE_NAME      ?= general-sim-api
 POSTGRES_IMAGE_NAME ?= general-sim-postgres
 NEO4J_IMAGE_NAME    ?= general-sim-neo4j
@@ -50,32 +55,17 @@ KIND_DEPLOY_TIMEOUT ?= 15m
 PUSH_EXTRA_ARGS ?=
 LOCAL_KIND_SMOKE_ARGS ?=
 
-# Kind: pin images to the local registry via global.registry / neo4j.customImage.
-HELM_KIND_IMAGE_SETS = \
+# Always pin Helm to Makefile REGISTRY/TAG (and image names) so deploy/Kind pull
+# the same revision that `make build` published. Neo4j uses a full customImage.
+HELM_IMAGE_SETS = \
 	--set global.registry=$(REGISTRY) \
 	--set global.imageTag=$(TAG) \
+	--set global.images.app=$(APP_IMAGE_NAME) \
+	--set global.images.postgres=$(POSTGRES_IMAGE_NAME) \
 	--set neo4j.image.customImage=$(IMG_NEO4J)
 
-# Neo4j subchart reads image.customImage directly (not global.registry helpers).
-_helm_neo4j_image_set := --set neo4j.image.customImage=$(IMG_NEO4J)
-
-# Optional helm --set overrides when image vars are passed on the make command line.
-_helm_image_set :=
-ifneq ($(filter command line,$(origin REGISTRY)),)
-  _helm_image_set += --set global.registry=$(REGISTRY)
-endif
-ifneq ($(filter command line,$(origin TAG)),)
-  _helm_image_set += --set global.imageTag=$(TAG)
-endif
-ifneq ($(filter command line,$(origin APP_IMAGE_NAME)),)
-  _helm_image_set += --set global.images.app=$(APP_IMAGE_NAME)
-endif
-ifneq ($(filter command line,$(origin POSTGRES_IMAGE_NAME)),)
-  _helm_image_set += --set global.images.postgres=$(POSTGRES_IMAGE_NAME)
-endif
-ifneq ($(filter command line,$(origin NEO4J_IMAGE_NAME)),)
-  _helm_neo4j_image_set := --set neo4j.image.customImage=$(IMG_NEO4J)
-endif
+# Kind uses the same image pins (local REGISTRY typically localhost:5001).
+HELM_KIND_IMAGE_SETS = $(HELM_IMAGE_SETS)
 
 # Stack model ids (providerKey/model.id)
 LOCAL_MODEL_KEY  ?= deepseek-r1-distill-qwen-1-5b
@@ -278,8 +268,8 @@ deploy-umbrella: _guard-values-secrets \
 	helm upgrade --install $(HELM_RELEASE_NAME) $(CHART_UMBRELLA) \
 	  $(HELM_COMMON) \
 	  -f $(CHART_VALUES_SECRETS) \
-	  $(_helm_image_set) \
-	  $(_helm_neo4j_image_set) \
+	  $(HELM_IMAGE_SETS) \
+	  $(HELM_EXTRA_ARGS) \
 	  --wait --timeout $(DEPLOY_TIMEOUT)
 	@printf "\n==> Deployment complete.\n"
 	@printf "    API (same-NS):  http://general-sim-api:8000\n"
