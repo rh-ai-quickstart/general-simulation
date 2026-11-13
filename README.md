@@ -632,7 +632,7 @@ make undeploy
 | `REGISTRY` | `quay.io/rh-ai-quickstart` | Image registry root |
 | `APP_IMAGE_NAME` | `general-sim-api` | App image name under `REGISTRY` |
 | `NAMESPACE` | `general-simulation` | Target OpenShift namespace |
-| `TAG` | `latest` | Image tag |
+| `TAG` | short git commit (`git rev-parse --short HEAD`) | Image tag (override with `TAG=<tag>` if git is unavailable) |
 | `DEPLOY_TIMEOUT` | `25m` | Helm `--wait` timeout |
 
 ---
