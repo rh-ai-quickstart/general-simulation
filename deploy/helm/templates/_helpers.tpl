@@ -110,6 +110,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $models.embedding | default "sentence-transformers/nomic-ai/nomic-embed-text-v1.5" -}}
 {{- end }}
 
+{{- define "api.embeddingProviderModelId" -}}
+{{- $models := (.Values.api.models | default dict) -}}
+{{- $models.embeddingProviderModelId | default (include "api.embeddingModelId" .) -}}
+{{- end }}
+
 {{- define "api.embeddingDimension" -}}
 {{- $models := (.Values.api.models | default dict) -}}
 {{- $models.embeddingDimension | default "768" -}}

@@ -146,7 +146,7 @@ subchart alone only sets the vector-store default).
 | Role | `api.models.*` | Provider |
 |------|----------------|----------|
 | Chat | `generation: external-model/llama-scout-17b` | `external-model` (MaaS) |
-| Embed | `embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5` | `sentence-transformers` (inline) |
+| Embed | `embedding: sentence-transformers/nomic-ai/nomic-embed-text-v1.5`; optional `embeddingProviderModelId` (defaults to `embedding`) | `sentence-transformers` (inline) |
 
 Set `url` explicitly for every remote chat provider. Without `url`, the chart
 defaults to in-cluster `http://<key>-vllm.<namespace>.svc.cluster.local/v1`.

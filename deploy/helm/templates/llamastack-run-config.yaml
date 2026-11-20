@@ -3,6 +3,7 @@
 {{- $models := include "general-simulation.llamaStackMergeModels" . | fromJson }}
 {{- $mcpServers := include "general-simulation.llamaStackMergeMcpServers" . | fromJson }}
 {{- $embeddingModelId := include "api.embeddingModelId" . }}
+{{- $embeddingProviderModelId := include "api.embeddingProviderModelId" . }}
 {{- $embeddingDimension := include "api.embeddingDimension" . }}
 {{- $embeddingTrustRemoteCode := include "general-simulation.llamaStackEmbeddingTrustRemoteCode" . | eq "true" }}
 ---
@@ -186,7 +187,7 @@ data:
           embedding_dimension: {{ $embeddingDimension }}
         model_id: {{ $embeddingModelId }}
         provider_id: sentence-transformers
-        provider_model_id: {{ $embeddingModelId }}
+        provider_model_id: {{ $embeddingProviderModelId }}
         model_type: embedding
       {{- else }}
       models:
@@ -194,7 +195,7 @@ data:
           embedding_dimension: {{ $embeddingDimension }}
         model_id: {{ $embeddingModelId }}
         provider_id: sentence-transformers
-        provider_model_id: {{ $embeddingModelId }}
+        provider_model_id: {{ $embeddingProviderModelId }}
         model_type: embedding
       {{- end }}
       vector_dbs: []
@@ -231,5 +232,5 @@ data:
       default_provider_id: pgvector
       default_embedding_model:
         provider_id: sentence-transformers
-        model_id: {{ $embeddingModelId }}
+        model_id: {{ $embeddingProviderModelId }}
 {{- end }}
